@@ -1,6 +1,27 @@
+Python
+
 venv/
 pycache/
-.env
-.DS_Store
-*.db
+*.pyc
 .pytest_cache/
+
+Environments (CRITICAL: Never commit this)
+
+.env
+
+OS Files
+
+.DS_Store
+Thumbs.db
+
+Database
+
+*.db
+*.sqlite3
+
+Frontend (Next.js / Node)
+
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/build/

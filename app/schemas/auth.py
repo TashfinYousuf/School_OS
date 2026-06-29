@@ -1,4 +1,5 @@
 from pydantic import BaseModel
+from typing import Optional
 
 class Token(BaseModel):
     """
@@ -9,7 +10,9 @@ class Token(BaseModel):
     
 class TokenPayload(BaseModel):
     """
-    Schema for decoding the JWT Token
+    Schema for decoding the JWT Token.
+    sub: User ID
+    tenant_id: School ID
     """
-    sub: str | None = None
-    tenant_id: str | None = None
+    sub: Optional[str] = None
+    tenant_id: Optional[str] = None

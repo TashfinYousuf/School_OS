@@ -7,6 +7,9 @@ from app.core.security import get_password_hash
 from app.models.tenant import User, Tenant
 from app.schemas.user import UserCreate, UserResponse
 
+# --- NEW: Import our dependencies for Protected Route ---
+from app.api.deps import get_current_active_user
+
 router = APIRouter()
 
 @router.post("/", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
@@ -14,7 +17,6 @@ def create_user(user_in: UserCreate, db: Session = Depends(get_db)):
     """
     Create a new user under a specific Tenant (School).
     """
-    # 1. Verify if the tenant exists
     tenant = db.query(Tenant).filter(Tenant.id == user_in.tenant_id).first()
     if not tenant:
         raise HTTPException(
@@ -22,7 +24,6 @@ def create_user(user_in: UserCreate, db: Session = Depends(get_db)):
             detail="The specified Tenant (School) does not exist."
         )
 
-    # 2. Check if email already exists WITHIN this specific tenant
     existing_user = db.query(User).filter(
         User.email == user_in.email, 
         User.tenant_id == user_in.tenant_id
@@ -34,7 +35,6 @@ def create_user(user_in: UserCreate, db: Session = Depends(get_db)):
             detail="A user with this email already exists in this school."
         )
 
-    # 3. Hash the password and save
     hashed_password = get_password_hash(user_in.password)
     
     new_user = User(
@@ -49,6 +49,19 @@ def create_user(user_in: UserCreate, db: Session = Depends(get_db)):
     db.refresh(new_user)
     
     return new_user
+
+
+# --- NEW PROTECTED ROUTE ---
+@router.get("/me", response_model=UserResponse)
+def read_user_me(
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Get current logged in user's profile.
+    This is a PROTECTED route. You must be logged in to access this.
+    """
+    return current_user
+
 
 @router.get("/", response_model=List[UserResponse])
 def get_users(tenant_id: str, skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
