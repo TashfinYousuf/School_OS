@@ -1,26 +1,174 @@
 @import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *)); /* এই লাইন থিম সুইচ করাবে */
 
+/* ═══════════════════════════════════════════════════════════
+   DESIGN TOKENS — Deep Premium Dark
+   All HSL values stored as raw components so the / opacity
+   modifier works: hsl(var(--primary) / 0.2)
+═══════════════════════════════════════════════════════════ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background:              240 10% 3.9%;
+  --foreground:              0 0% 98%;
+
+  --card:                    240 10% 5.5%;
+  --card-foreground:         0 0% 98%;
+
+  --popover:                 240 10% 5.5%;
+  --popover-foreground:      0 0% 98%;
+
+  --primary:                 262 83% 70%;       /* AI Purple */
+  --primary-foreground:      240 5.9% 10%;
+
+  --secondary:               240 3.7% 13%;
+  --secondary-foreground:    0 0% 98%;
+
+  --muted:                   240 3.7% 13%;
+  --muted-foreground:        240 5% 50%;
+
+  --accent:                  240 3.7% 13%;
+  --accent-foreground:       0 0% 98%;
+
+  --destructive:             0 62.8% 30.6%;
+  --destructive-foreground:  0 0% 98%;
+
+  --border:                  240 3.7% 12%;
+  --input:                   240 3.7% 12%;
+  --ring:                    262 83% 70%;
+
+  --radius:                  0.75rem;
+  --ai-glow:                 262 83% 70%;
 }
 
+/* ═══════════════════════════════════════════════════════════
+   THEME MAPPING — registers utilities like bg-background,
+   text-foreground, border-border, text-primary, etc.
+   hsl() wrapper here because @theme inline resolves at
+   build time against these exact values.
+═══════════════════════════════════════════════════════════ */
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-background:              hsl(var(--background));
+  --color-foreground:              hsl(var(--foreground));
+  --color-card:                    hsl(var(--card));
+  --color-card-foreground:         hsl(var(--card-foreground));
+  --color-popover:                 hsl(var(--popover));
+  --color-popover-foreground:      hsl(var(--popover-foreground));
+  --color-primary:                 hsl(var(--primary));
+  --color-primary-foreground:      hsl(var(--primary-foreground));
+  --color-secondary:               hsl(var(--secondary));
+  --color-secondary-foreground:    hsl(var(--secondary-foreground));
+  --color-muted:                   hsl(var(--muted));
+  --color-muted-foreground:        hsl(var(--muted-foreground));
+  --color-accent:                  hsl(var(--accent));
+  --color-accent-foreground:       hsl(var(--accent-foreground));
+  --color-destructive:             hsl(var(--destructive));
+  --color-destructive-foreground:  hsl(var(--destructive-foreground));
+  --color-border:                  hsl(var(--border));
+  --color-input:                   hsl(var(--input));
+  --color-ring:                    hsl(var(--ring));
+  --color-ai:                      hsl(var(--ai-glow));
+
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+/* ═══════════════════════════════════════════════════════════
+   BASE LAYER
+═══════════════════════════════════════════════════════════ */
+@layer base {
+  * {
+    @apply border-border;
   }
+
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+
+  /* Premium thin scrollbar throughout the app */
+  ::-webkit-scrollbar              { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track        { background: transparent; }
+  ::-webkit-scrollbar-thumb        { background: hsl(var(--border)); border-radius: 999px; }
+  ::-webkit-scrollbar-thumb:hover  { background: hsl(var(--muted-foreground)); }
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* ═══════════════════════════════════════════════════════════
+   UTILITIES — Premium Dark Glassmorphism System
+═══════════════════════════════════════════════════════════ */
+@layer utilities {
+
+  /* Ambient page background — subtle dual-sided purple radial glow */
+  .dashboard-bg {
+    background-color: hsl(var(--background));
+    background-image:
+      radial-gradient(ellipse 70% 45% at 15% -5%,  hsl(var(--ai-glow) / 0.09) 0%, transparent 65%),
+      radial-gradient(ellipse 50% 35% at 88% 105%, hsl(var(--ai-glow) / 0.06) 0%, transparent 60%);
+  }
+
+  /* Generic glass card — for content panels */
+  .glass-panel {
+    @apply bg-white/[0.03] backdrop-blur-2xl border border-white/[0.07]
+           shadow-[0_8px_32px_rgb(0,0,0,0.35)];
+  }
+
+  /* Sidebar — slightly richer tint + vertical gradient */
+  .glass-sidebar {
+    background: linear-gradient(
+      180deg,
+      hsl(240 10% 5.2%) 0%,
+      hsl(240 10% 4.2%) 100%
+    );
+    border-right: 1px solid hsl(var(--border) / 0.8);
+    backdrop-filter: blur(40px);
+  }
+
+  /* Elevated card */
+  .glass-card {
+    @apply bg-white/[0.04] backdrop-blur-xl border border-white/[0.08]
+           rounded-xl shadow-[0_4px_24px_rgb(0,0,0,0.25)];
+  }
+
+  /* AI accent border + inner glow */
+  .ai-glow-border {
+    border: 1px solid hsl(var(--ai-glow) / 0.35);
+    box-shadow:
+      0 0 18px hsl(var(--ai-glow) / 0.12),
+      inset 0 0 14px hsl(var(--ai-glow) / 0.06);
+  }
+
+  /* Outer glow drop-shadow */
+  .ai-shadow {
+    box-shadow: 0 0 28px hsl(var(--ai-glow) / 0.3);
+  }
+
+  /* Gradient brand / heading text */
+  .gradient-text {
+    background: linear-gradient(130deg, hsl(var(--ai-glow)) 0%, hsl(280 80% 78%) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  /* Sidebar nav active state — left-accent bar + purple wash */
+  .nav-active {
+    background: linear-gradient(
+      90deg,
+      hsl(var(--ai-glow) / 0.18) 0%,
+      hsl(var(--ai-glow) / 0.04) 100%
+    );
+    position: relative;
+  }
+
+  /* The left accent stripe via pseudo-element (respects border-radius) */
+  .nav-active::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 20%;
+    bottom: 20%;
+    width: 2.5px;
+    background: hsl(var(--ai-glow));
+    border-radius: 0 3px 3px 0;
+    box-shadow: 0 0 8px hsl(var(--ai-glow) / 0.8);
+  }
 }
