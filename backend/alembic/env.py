@@ -17,6 +17,8 @@ from app.models.base import Base
 from app.models.tenant import *
 from app.models.users import *
 from app.models.academic import *
+from app.models.student import *
+from app.models.guardian import *
 # Note: As we add new models (like finance, hr), we must import them here too!
 
 # this is the Alembic Config object, which provides

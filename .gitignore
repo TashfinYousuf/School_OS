@@ -1,11 +1,12 @@
-Python
+# Python
 
 venv/
 pycache/
+__pycache__
 *.pyc
 .pytest_cache/
 
-Environments (CRITICAL: Never commit this)
+# Environments (CRITICAL: Never commit this)
 
 .env
 
@@ -19,9 +20,20 @@ Database
 *.db
 *.sqlite3
 
-Frontend (Next.js / Node)
+# Frontend (Next.js / Node)
 
 frontend/node_modules/
 frontend/.next/
 frontend/out/
 frontend/build/
+frontend/.env.local
+
+# Backend
+venv/
+__pycache__/
+*.pyc
+.env
+.pytest_cache/
+
+# OS
+.DS_Store

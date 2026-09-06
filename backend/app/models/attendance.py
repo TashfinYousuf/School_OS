@@ -14,8 +14,8 @@ class AttendanceEvent(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id = Column(String, index=True, nullable=False)
     
-    # References
-    student_id = Column(String, index=True, nullable=False) # Can be UUID or String based on your Students model
+    # 🚀 DB column is VARCHAR, keep it String to avoid type casting conflicts
+    student_id = Column(String, index=True, nullable=False)
     class_id = Column(String, index=True, nullable=True) 
     
     # Core Data

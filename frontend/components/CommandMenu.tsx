@@ -67,6 +67,27 @@ export function CommandMenu() {
     }
   };
 
+  const handleAIQuery = async (userPrompt: string) => {
+  setLoading(true);
+  try {
+    const token = localStorage.getItem("token");
+    const res = await fetch("http://127.0.0.1:8000/api/v1/ai/grounded-query", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify({ query: userPrompt })
+    });
+    if (res.ok) {
+      const data = await res.json();
+      setResponse(data.answer);
+    }
+  } finally {
+    setLoading(false);
+  }
+};
+
   return (
     <>
       {/* Sidebar Search Trigger Button (Matches the Dark Theme Sidebar) */}

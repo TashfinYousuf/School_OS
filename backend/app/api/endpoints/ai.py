@@ -1,10 +1,12 @@
 import os
+import datetime
+import google.genai as genai 
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-import google.genai as genai 
 from google.genai import types
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -12,6 +14,21 @@ from app.core.config import settings
 from app.api.deps import get_current_tenant_id
 from app.core.database import get_db
 from app.models.audit import AuditLog
+
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from pydantic import BaseModel
+from datetime import date
+from google import genai
+from google.genai import types
+
+from app.core.database import get_db
+from app.core.config import settings
+from app.api.deps import get_current_tenant_id, require_roles
+from app.models.student import Student
+from app.models.attendance import AttendanceEvent
+from app.models.users import Teacher
+from app.models.finance import FeePayment
 
 router = APIRouter()
 
@@ -26,7 +43,12 @@ gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 # SDK-এর জন্য সরাসরি OS Environment-এ সেট করে দেওয়া (সবচেয়ে সেফ পদ্ধতি)
 os.environ["GEMINI_API_KEY"] = GEMINI_API_KEY
-client = genai.Client() # Client অটোমেটিক OS Environment থেকে Key নিয়ে নেবে
+
+clean_api_key = settings.GEMINI_API_KEY.strip().strip('"').strip("'")
+ai_client = genai.Client(api_key=clean_api_key)
+
+class QueryPayload(BaseModel):
+    query: str
 
 class PromptRequest(BaseModel):
     query: str
@@ -36,6 +58,10 @@ class AIResponse(BaseModel):
     response: str
     action_suggested: str | None = None
 
+class AICommandRequest(BaseModel):
+    query: str
+
+    
 @router.post("/ask", response_model=AIResponse)
 async def ask_schoolos_ai(
     request: PromptRequest,
@@ -66,7 +92,7 @@ async def ask_schoolos_ai(
         )
 
         # ৩. Google-এর রেকমেন্ডেশন অনুযায়ী Chat API ব্যবহার (500 Error Fix)
-        chat = client.chats.create(
+        chat = ai_client.chats.create(
             model='gemini-2.5-flash',
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,
@@ -84,4 +110,119 @@ async def ask_schoolos_ai(
         
     except Exception as e:
         print(f"--- AI GATEWAY ERROR ---: {str(e)}") # টার্মিনালে ডিটেইলস দেখাবে
+        raise HTTPException(status_code=500, detail=f"AI Engine Error: {str(e)}")
+
+
+@router.post("/grounded-query")
+def grounded_school_query(
+    payload: AICommandRequest,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_current_tenant_id),
+    _=Depends(require_roles(["admin", "teacher"]))
+):
+    today = date.today()
+    
+    # Live Digital Twin Metrics
+    total_students = db.query(Student).filter(Student.tenant_id == tenant_id, Student.status == "Active").count()
+    total_teachers = db.query(Teacher).filter(Teacher.tenant_id == tenant_id).count()
+    present_today = db.query(AttendanceEvent).filter(
+        AttendanceEvent.tenant_id == tenant_id, 
+        AttendanceEvent.date == today, 
+        AttendanceEvent.status == "Present"
+    ).count()
+    absent_today = db.query(AttendanceEvent).filter(
+        AttendanceEvent.tenant_id == tenant_id, 
+        AttendanceEvent.date == today, 
+        AttendanceEvent.status == "Absent"
+    ).count()
+
+    context = (
+        f"Institution: Kids Shine International School\n"
+        f"Date: {today}\n"
+        f"Total Active Students: {total_students}\n"
+        f"Total Teachers: {total_teachers}\n"
+        f"Students Present Today: {present_today}\n"
+        f"Students Absent Today: {absent_today}\n"
+    )
+
+    system_instruction = (
+        "You are the executive operational copilot for Kids Shine International School. "
+        "Answer the principal or teacher's query concisely based on the live operational data provided. "
+        "Respond in the same language (Bangla or English) as the query. Do not invent false data."
+    )
+
+    try:
+        chat = ai_client.chats.create(
+            model='gemini-2.5-flash',
+            config=types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                temperature=0.2
+            )
+        )
+        response = chat.send_message(f"Live Campus Context:\n{context}\n\nUser Question: {payload.query}")
+        return {"answer": response.text}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"AI Engine Error: {str(e)}")
+
+@router.post("/grounded-query")
+def execute_grounded_ai_query(
+    payload: QueryPayload,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_current_tenant_id),
+    _=Depends(require_roles(["admin", "teacher"]))
+):
+    """
+    RAG Grounding: Pulls real-time campus operational data from Postgres 
+    and answers executive queries with Gemini 2.5 Flash.
+    """
+    today = datetime.date.today()
+
+    # 1. Real-time Metrics
+    total_students = db.query(Student).filter(Student.tenant_id == str(tenant_id), Student.status == "Active").count()
+    present_today = db.query(AttendanceEvent).filter(
+        AttendanceEvent.tenant_id == str(tenant_id),
+        AttendanceEvent.date == today,
+        AttendanceEvent.status == "Present"
+    ).count()
+    absent_today = db.query(AttendanceEvent).filter(
+        AttendanceEvent.tenant_id == str(tenant_id),
+        AttendanceEvent.date == today,
+        AttendanceEvent.status == "Absent"
+    ).count()
+
+    fees_today = db.query(func.sum(FeePayment.amount_paid)).filter(
+        FeePayment.tenant_id == str(tenant_id),
+        func.date(FeePayment.payment_date) == today
+    ).scalar() or 0.0
+
+    total_revenue = db.query(func.sum(FeePayment.amount_paid)).filter(
+        FeePayment.tenant_id == str(tenant_id)
+    ).scalar() or 0.0
+
+    context = f"""
+    CAMPUS REAL-TIME SNAPSHOT ({today.strftime('%d %B, %Y')}):
+    - Total Enrolled Students: {total_students}
+    - Students Present Today: {present_today}
+    - Students Absent Today: {absent_today}
+    - Tuition Fees Collected Today: ৳{fees_today}
+    - Total Institutional Revenue: ৳{total_revenue}
+    """
+
+    system_instruction = (
+        "You are SchoolOS Copilot, the AI executive partner for Kids Shine International School. "
+        "Answer the administrator or teacher's query concisely and accurately using ONLY the live campus data provided. "
+        "Support both Bangla and English fluently. Never invent numbers."
+    )
+
+    try:
+        chat = ai_client.chats.create(
+            model='gemini-2.5-flash',
+            config=types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                temperature=0.2
+            )
+        )
+        response = chat.send_message(f"Current Context:\n{context}\n\nQuestion: {payload.query}")
+        return {"answer": response.text}
+    except Exception as e:
         raise HTTPException(status_code=500, detail=f"AI Engine Error: {str(e)}")

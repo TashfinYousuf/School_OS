@@ -1,164 +1,245 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { MessageSquare, MessageCircle, Globe, ShieldAlert, CheckCircle2, Edit3, Send, Loader2, Bot } from "lucide-react";
 import { useLanguage } from "@/components/providers";
+import { 
+  MessageSquare, ShieldAlert, CheckCircle2, 
+  Send, RefreshCw, Loader2, User, ExternalLink, Sparkles 
+} from "lucide-react";
 
-export default function CommunicationOSPage() {
+interface InboxMessage {
+  id: string;
+  channel: string;
+  sender_info: string;
+  content: string;
+  intent: string;
+  ai_draft: string;
+  risk_level: string;
+  status: string;
+  created_at: string;
+  student_meta: string;
+}
+
+export default function UnifiedInboxPage() {
   const { language } = useLanguage();
-  const [messages, setMessages] = useState<any[]>([]);
+  const [messages, setMessages] = useState<InboxMessage[]>([]);
+  const [selectedMsg, setSelectedMsg] = useState<InboxMessage | null>(null);
   const [loading, setLoading] = useState(true);
-  const [selectedMsg, setSelectedMsg] = useState<any | null>(null);
+  const [replyText, setReplyText] = useState("");
+  const [sending, setSending] = useState(false);
 
-  const fetchMessages = async () => {
-    setLoading(true);
+  const fetchInbox = async () => {
     try {
       const token = localStorage.getItem("token");
       const res = await fetch("http://127.0.0.1:8000/api/v1/communication/inbox", {
         headers: { Authorization: `Bearer ${token}` }
       });
-      if (res.ok) setMessages(await res.json());
+      if (res.ok) {
+        const data = await res.json();
+        setMessages(data);
+        if (data.length > 0 && !selectedMsg) {
+          setSelectedMsg(data[0]);
+          setReplyText(data[0].ai_draft || "");
+        }
+      }
     } finally {
       setLoading(false);
     }
   };
 
-  const simulateIncoming = async () => {
-    const token = localStorage.getItem("token");
-    await fetch("http://127.0.0.1:8000/api/v1/communication/demo-webhook", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}` }
-    });
-    fetchMessages();
+  useEffect(() => {
+    fetchInbox();
+    // 10-second live polling for new inbound messages
+    const interval = setInterval(fetchInbox, 10000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const handleSelectThread = (m: InboxMessage) => {
+    setSelectedMsg(m);
+    setReplyText(m.ai_draft || "");
   };
 
-  useEffect(() => { fetchMessages(); }, []);
+  const handleSendReply = async () => {
+    if (!selectedMsg || !replyText.trim()) return;
+    setSending(true);
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`http://127.0.0.1:8000/api/v1/communication/${selectedMsg.id}/reply`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ reply_content: replyText })
+      });
 
-  const getChannelIcon = (channel: string) => {
-    if (channel === "WhatsApp") return <MessageCircle size={16} className="text-green-500" />;
-    if (channel === "Website") return <Globe size={16} className="text-blue-500" />;
-    return <MessageSquare size={16} className="text-gray-500" />;
+      if (res.ok) {
+        fetchInbox();
+        setSelectedMsg(prev => prev ? { ...prev, status: "Resolved", risk_level: "Low", ai_draft: replyText } : null);
+      }
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const handleOpenWhatsAppDirect = () => {
+    if (!selectedMsg) return;
+    const phoneMatch = selectedMsg.sender_info.match(/\d{10,14}/);
+    if (!phoneMatch) return;
+    let phone = phoneMatch[0];
+    if (!phone.startsWith("88")) phone = "88" + phone;
+    const text = encodeURIComponent(replyText);
+    window.open(`https://wa.me/${phone}?text=${text}`, "_blank");
   };
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-500 h-[calc(100vh-8rem)] flex flex-col">
+    <div className="space-y-6 animate-in fade-in duration-300">
       
-      <div className="flex justify-between items-end shrink-0">
+      {/* Header */}
+      <div className="flex justify-between items-center border-b border-gray-200 dark:border-white/10 pb-5">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900 dark:text-white tracking-tight">
-            {language === "EN" ? "Unified Inbox" : "ইউনিফাইড ইনবক্স"}
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-gray-900 dark:text-white flex items-center gap-2.5">
+            <MessageSquare className="text-green-600 dark:text-green-400" />
+            <span>{language === "EN" ? "Unified Guardian Inbox" : "অভিভাবক মেসেজিং ও ইনবক্স হাব"}</span>
           </h1>
-          <p className="text-gray-500 dark:text-gray-400 mt-1">
-            {language === "EN" ? "Manage omni-channel communications with AI guardrails." : "এআই গার্ডরেল সহ অমনি-চ্যানেল যোগাযোগ পরিচালনা করুন।"}
-          </p>
+          <p className="text-xs text-gray-500 mt-1">Live WhatsApp & SMS queue with Gemini 2.5 intent triage & safety guardrails.</p>
         </div>
-        <button onClick={simulateIncoming} className="bg-white dark:bg-[#111] border border-gray-200 dark:border-white/10 text-gray-700 dark:text-gray-300 px-4 py-2 rounded-xl text-sm font-medium hover:bg-gray-50 dark:hover:bg-white/5 transition-colors shadow-sm">
-          + Simulate Message
+
+        <button
+          onClick={fetchInbox}
+          className="p-2.5 rounded-xl border border-gray-200 dark:border-white/10 hover:bg-gray-100 dark:hover:bg-white/5 text-gray-600 dark:text-gray-300 transition-colors"
+          title="Refresh Inbox"
+        >
+          <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
         </button>
       </div>
 
-      <div className="flex-1 bg-white dark:bg-[#0f0f11] border border-gray-200 dark:border-white/[0.08] rounded-3xl shadow-sm flex overflow-hidden">
+      {/* Split View */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-[72vh]">
         
-        {/* Left: Chat List */}
-        <div className="w-1/3 border-r border-gray-200 dark:border-white/10 flex flex-col bg-gray-50/50 dark:bg-black/20">
-          <div className="p-4 border-b border-gray-200 dark:border-white/10 shrink-0">
-            <h3 className="text-sm font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-              {language === "EN" ? "Active Queries" : "সক্রিয় প্রশ্নাবলী"}
-            </h3>
+        {/* Thread List (Left Pane) */}
+        <div className="lg:col-span-5 bg-white dark:bg-[#0f0f11] border border-gray-200 dark:border-white/10 rounded-3xl p-4 overflow-y-auto custom-scrollbar flex flex-col gap-2">
+          <div className="text-[11px] font-bold uppercase tracking-wider text-gray-400 px-2 py-1">
+            Active Queries ({messages.length})
           </div>
-          
-          <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-1">
-            {loading ? (
-              <div className="flex justify-center p-8"><Loader2 className="animate-spin text-blue-500" /></div>
-            ) : messages.length === 0 ? (
-              <div className="p-8 text-center text-gray-500 text-sm">Inbox is empty.</div>
-            ) : (
-              messages.map((msg) => (
-                <div 
-                  key={msg.id} 
-                  onClick={() => setSelectedMsg(msg)}
-                  className={`p-4 rounded-2xl cursor-pointer transition-all border ${
-                    selectedMsg?.id === msg.id 
-                      ? "bg-blue-50 dark:bg-blue-500/10 border-blue-200 dark:border-blue-500/30" 
-                      : "bg-transparent border-transparent hover:bg-gray-100 dark:hover:bg-white/5"
-                  }`}
-                >
-                  <div className="flex justify-between items-start mb-1">
-                    <div className="flex items-center gap-2">
-                      {getChannelIcon(msg.channel)}
-                      <span className="font-semibold text-sm text-gray-900 dark:text-white">{msg.sender_info}</span>
-                    </div>
-                  </div>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 line-clamp-1 mt-1">{msg.content}</p>
-                  {msg.risk_level === "High" && (
-                    <span className="inline-flex mt-2 items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-red-50 text-red-600 dark:bg-red-500/10 dark:text-red-400 uppercase border border-red-100 dark:border-red-500/20">
-                      <ShieldAlert size={10} /> Escalated
-                    </span>
-                  )}
+
+          {loading && messages.length === 0 ? (
+            <div className="p-12 text-center text-gray-400 flex items-center justify-center gap-2">
+              <Loader2 className="animate-spin text-green-600" size={18} /> Syncing messages...
+            </div>
+          ) : messages.length === 0 ? (
+            <div className="p-12 text-center text-gray-400 text-xs">No active guardian messages in queue.</div>
+          ) : (
+            messages.map((m) => (
+              <button
+                key={m.id}
+                onClick={() => handleSelectThread(m)}
+                className={`p-4 rounded-2xl text-left transition-all border ${
+                  selectedMsg?.id === m.id
+                    ? "bg-green-50/50 dark:bg-green-500/10 border-green-500/40 shadow-sm"
+                    : "border-gray-100 dark:border-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.02]"
+                }`}
+              >
+                <div className="flex justify-between items-start mb-1">
+                  <span className="font-semibold text-xs text-gray-900 dark:text-white truncate max-w-[180px]">
+                    {m.sender_info}
+                  </span>
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${
+                    m.risk_level === "High" ? "bg-red-50 text-red-600 dark:bg-red-500/10" :
+                    m.status === "Resolved" ? "bg-green-50 text-green-600 dark:bg-green-500/10" :
+                    "bg-gray-100 text-gray-600 dark:bg-white/10 dark:text-gray-300"
+                  }`}>
+                    {m.status}
+                  </span>
                 </div>
-              ))
-            )}
-          </div>
+
+                <div className="text-[11px] text-gray-500 font-medium truncate mb-1">
+                  {m.student_meta}
+                </div>
+
+                <p className="text-xs text-gray-700 dark:text-gray-300 line-clamp-2 leading-relaxed">
+                  {m.content}
+                </p>
+              </button>
+            ))
+          )}
         </div>
 
-        {/* Right: Chat View & AI Guardrail */}
-        <div className="flex-1 flex flex-col bg-white dark:bg-transparent relative">
+        {/* Conversation & AI Action Center (Right Pane) */}
+        <div className="lg:col-span-7 bg-white dark:bg-[#0f0f11] border border-gray-200 dark:border-white/10 rounded-3xl p-6 flex flex-col justify-between overflow-hidden shadow-sm">
           {selectedMsg ? (
-            <>
-              {/* Message Thread */}
-              <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
-                
-                <div className="flex flex-col items-start max-w-[80%]">
-                  <span className="text-[10px] font-bold text-gray-400 uppercase mb-1 ml-1">{selectedMsg.sender_info} ({selectedMsg.channel})</span>
-                  <div className="bg-gray-100 dark:bg-white/10 text-gray-900 dark:text-white p-4 rounded-2xl rounded-tl-sm text-sm leading-relaxed border border-gray-200 dark:border-white/5 shadow-sm">
-                    {selectedMsg.content}
+            <div className="h-full flex flex-col justify-between space-y-4">
+              
+              {/* Top Details */}
+              <div className="border-b border-gray-100 dark:border-white/10 pb-4">
+                <div className="flex justify-between items-center">
+                  <div>
+                    <h3 className="font-bold text-sm text-gray-900 dark:text-white">{selectedMsg.sender_info}</h3>
+                    <p className="text-xs text-blue-600 dark:text-purple-400 mt-0.5">{selectedMsg.student_meta}</p>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-[10px] uppercase font-mono px-2 py-1 bg-gray-100 dark:bg-white/10 rounded text-gray-600 dark:text-gray-300">
+                      Intent: {selectedMsg.intent || "General"}
+                    </span>
                   </div>
                 </div>
-
-                {/* AI Draft Block */}
-                {selectedMsg.ai_draft && (
-                  <div className="flex flex-col items-end max-w-[80%] ml-auto mt-8">
-                    <span className="flex items-center gap-1 text-[10px] font-bold text-purple-500 uppercase mb-1 mr-1">
-                      <Bot size={12} /> AI Draft (Awaiting Approval)
-                    </span>
-                    <div className="bg-purple-50 dark:bg-purple-500/10 text-purple-900 dark:text-purple-100 p-4 rounded-2xl rounded-tr-sm text-sm leading-relaxed border border-purple-200 dark:border-purple-500/20 shadow-sm relative group">
-                      {selectedMsg.ai_draft}
-                      <button className="absolute top-2 right-2 p-1.5 bg-white dark:bg-black/40 rounded-lg text-purple-500 opacity-0 group-hover:opacity-100 transition-opacity shadow-sm">
-                        <Edit3 size={14} />
-                      </button>
-                    </div>
-                  </div>
-                )}
               </div>
 
-              {/* Action Bar (Guardrail) */}
-              <div className="p-4 border-t border-gray-100 dark:border-white/10 bg-gray-50/50 dark:bg-black/20 shrink-0">
-                {selectedMsg.risk_level === "High" ? (
-                  <div className="flex items-center justify-between p-3 bg-red-50 dark:bg-red-500/5 border border-red-200 dark:border-red-500/20 rounded-xl">
-                    <div className="flex items-center gap-2 text-sm text-red-700 dark:text-red-400 font-medium">
-                      <ShieldAlert size={18} /> High-Risk Intent Detected. Manual intervention required.
-                    </div>
-                    <div className="flex gap-2">
-                      <button className="px-4 py-2 bg-white dark:bg-[#111] text-gray-700 dark:text-gray-300 text-sm font-medium rounded-lg border border-gray-200 dark:border-white/10 hover:bg-gray-50 dark:hover:bg-white/5 transition-colors">Edit</button>
-                      <button className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-sm font-medium rounded-lg shadow-sm transition-colors flex items-center gap-2">
-                        <Send size={14} /> Send Reply
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex gap-2">
-                    <input type="text" placeholder="Type a custom reply..." className="flex-1 bg-white dark:bg-[#111] border border-gray-200 dark:border-white/10 rounded-xl px-4 text-sm text-gray-900 dark:text-white outline-none focus:border-blue-500 transition-colors" />
-                    <button className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-sm transition-colors">
-                      <Send size={18} />
-                    </button>
-                  </div>
-                )}
+              {/* Guardian's Incoming Message */}
+              <div className="p-4 bg-gray-50 dark:bg-black/30 border border-gray-200 dark:border-white/10 rounded-2xl">
+                <span className="text-[10px] font-bold uppercase text-gray-400 block mb-1">Guardian's Query</span>
+                <p className="text-xs text-gray-900 dark:text-gray-100 leading-relaxed font-sans">
+                  {selectedMsg.content}
+                </p>
               </div>
-            </>
+
+              {/* AI Guardrail Alert */}
+              {selectedMsg.risk_level === "High" && (
+                <div className="p-3 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 rounded-xl text-red-700 dark:text-red-400 text-xs flex items-center gap-2">
+                  <ShieldAlert size={16} className="shrink-0" />
+                  <span>High-Risk Intent detected (Complaint/Escalation). Review AI draft before dispatching.</span>
+                </div>
+              )}
+
+              {/* Editable Response Area */}
+              <div className="space-y-2 flex-1 flex flex-col justify-end">
+                <div className="flex justify-between items-center text-xs">
+                  <span className="font-semibold text-purple-600 dark:text-purple-400 flex items-center gap-1">
+                    <Sparkles size={14} /> AI Recommended Institutional Reply (Bangla)
+                  </span>
+                </div>
+                <textarea
+                  rows={4}
+                  value={replyText}
+                  onChange={(e) => setReplyText(e.target.value)}
+                  className="w-full bg-gray-50 dark:bg-black/40 border border-gray-200 dark:border-white/10 rounded-2xl p-3 text-xs text-gray-900 dark:text-white outline-none focus:border-green-500 resize-none leading-relaxed font-sans"
+                />
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex justify-end gap-3 pt-3 border-t border-gray-100 dark:border-white/10">
+                <button
+                  type="button"
+                  onClick={handleOpenWhatsAppDirect}
+                  className="px-4 py-2 rounded-xl border border-gray-200 dark:border-white/10 text-xs font-semibold hover:bg-gray-50 dark:hover:bg-white/5 flex items-center gap-1.5 text-gray-700 dark:text-gray-300 transition-colors"
+                >
+                  <ExternalLink size={13} /> Open WhatsApp Web
+                </button>
+                <button
+                  onClick={handleSendReply}
+                  disabled={sending || !replyText.trim()}
+                  className="bg-green-600 hover:bg-green-700 text-white px-5 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-sm disabled:opacity-50 transition-all"
+                >
+                  {sending ? <Loader2 size={13} className="animate-spin" /> : <Send size={13} />}
+                  Mark Resolved & Log Reply
+                </button>
+              </div>
+
+            </div>
           ) : (
-            <div className="flex-1 flex flex-col items-center justify-center text-gray-400">
-              <MessageSquare size={48} className="mb-4 opacity-20" />
-              <p>{language === "EN" ? "Select a conversation to view the thread." : "থ্রেড দেখতে একটি কথোপকথন নির্বাচন করুন।"}</p>
+            <div className="h-full flex flex-col items-center justify-center text-gray-400">
+              <MessageSquare size={36} className="opacity-20 mb-2" />
+              <p className="text-xs">Select an incoming thread from the left to view and respond.</p>
             </div>
           )}
         </div>

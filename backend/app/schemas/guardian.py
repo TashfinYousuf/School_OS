@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr, Field, ConfigDict
-from typing import Optional
+from typing import Optional, Union
 from uuid import UUID
 
 class GuardianCreate(BaseModel):
@@ -12,8 +12,8 @@ class GuardianCreate(BaseModel):
 class GuardianResponse(BaseModel):
     """Response schema after guardian creation"""
     id: UUID
-    user_id: UUID
-    tenant_id: UUID
+    user_id: Optional[UUID] = None
+    tenant_id: Union[UUID, str]
     first_name: str
     last_name: Optional[str] = None
 

@@ -1,7 +1,8 @@
 import uuid
 
-from sqlalchemy import Column, String, Boolean, ForeignKey
+from sqlalchemy import Column, String, Boolean, ForeignKey, DateTime, Text
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from app.models.base import TenantAwareModel
 from app.models.base import Base
@@ -52,3 +53,42 @@ class Subject(Base):
     core_competency = Column(String, nullable=True)  # e.g., "Scientific Logic, Critical Thinking"
     
     grade = relationship("GradeLevel", back_populates="subjects")
+
+
+class ClassRoutine(Base):
+    __tablename__ = "class_routines"
+    __table_args__ = {'extend_existing': True}
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    # 🚀 Fix: Ensure tenant_id is String to prevent ::UUID auto-casting
+    tenant_id = Column(String, index=True, nullable=False)
+    
+    class_name = Column(String, index=True, nullable=False) # e.g. "Class 1"
+    day_of_week = Column(String, index=True, nullable=False) # Sunday, Monday, etc.
+    period_number = Column(String, nullable=False)          # Period 1, Period 2
+    start_time = Column(String, nullable=False)             # 09:00 AM
+    end_time = Column(String, nullable=False)               # 09:45 AM
+    
+    subject = Column(String, nullable=False)                # English, Bangla, Math
+    teacher_name = Column(String, nullable=False)           # Assigned Educator
+    room_number = Column(String, default="Room 101")
+    
+    created_at = Column(DateTime(timezone=True), default=func.now())
+
+
+class DailyLessonLog(Base):
+    __tablename__ = "daily_lesson_logs"
+    __table_args__ = {'extend_existing': True}
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(String, index=True, nullable=False)
+    
+    class_name = Column(String, index=True, nullable=False)
+    subject = Column(String, index=True, nullable=False)
+    teacher_name = Column(String, nullable=False)
+    lesson_date = Column(DateTime(timezone=True), default=func.now())
+    
+    topic_title = Column(String, nullable=False) # e.g. "Unit 4: Tenses & Sentence Structure"
+    lecture_summary = Column(Text, nullable=False)
+    homework_assigned = Column(Text, nullable=True)
+    submission_deadline = Column(String, default="Next Class")

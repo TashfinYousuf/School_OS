@@ -4,9 +4,10 @@ from sqlalchemy.orm import Session
 import uuid
 
 from app.models.approval import ApprovalTask
+from app.models.audit import AuditLog
 from app.schemas.approval import ApprovalTaskResponse, ApprovalTaskUpdate, ApprovalTaskCreate
 from app.core.database import get_db
-from app.api.deps import get_current_tenant_id
+from app.api.deps import get_current_tenant_id, require_roles
 
 router = APIRouter()
 
@@ -20,22 +21,39 @@ def get_pending_tasks(
         ApprovalTask.status == "Pending"
     ).order_by(ApprovalTask.created_at.desc()).all()
 
+
 @router.patch("/{task_id}", response_model=ApprovalTaskResponse)
 def resolve_task(
     task_id: uuid.UUID,
     update_data: ApprovalTaskUpdate,
     db: Session = Depends(get_db),
-    tenant_id: str = Depends(get_current_tenant_id)
+    tenant_id: str = Depends(get_current_tenant_id),
+    claims: dict = Depends(require_roles(["admin"]))
 ):
-    task = db.query(ApprovalTask).filter(ApprovalTask.id == task_id, ApprovalTask.tenant_id == tenant_id).first()
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found")
+    task = db.query(ApprovalTask).filter(
+        ApprovalTask.id == task_id, 
+        ApprovalTask.tenant_id == tenant_id
+    ).first()
     
-    # Update payload if edited
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found in approval queue")
+    
     if update_data.payload_content:
         task.payload_content = update_data.payload_content
     
     task.status = update_data.status
+    
+    # 🚀 Audit Trail Entry upon resolution
+    audit_entry = AuditLog(
+        tenant_id=tenant_id,
+        actor_id=claims["user_id"],
+        action_type=f"approval.{update_data.status.lower()}",
+        target_entity=task.title,
+        risk_level=task.risk_level,
+        event_payload={"task_id": str(task.id), "action_type": task.action_type}
+    )
+    db.add(audit_entry)
+    
     db.commit()
     db.refresh(task)
     return task

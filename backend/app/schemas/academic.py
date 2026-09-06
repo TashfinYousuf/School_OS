@@ -32,7 +32,7 @@ class SubjectResponse(SubjectBase):
 
 # --- NEW: Academic Session Schemas ---
 class AcademicSessionBase(BaseModel):
-    session_year: str = Field(..., title="Year (e.g., 2026, 2026-2027)", max_length=10)
+    session_year: str = Field(..., title="Year (e.g., 2027, 2027-2028)", max_length=10)
     is_current: bool = False
 
 class AcademicSessionCreate(AcademicSessionBase):

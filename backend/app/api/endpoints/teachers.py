@@ -1,63 +1,165 @@
+import uuid
+
+from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
-from typing import List
+from sqlalchemy.orm import Session, joinedload, load_only
+from pydantic import BaseModel
 
 from app.core.database import get_db
 from app.core.security import get_password_hash
-from app.models.tenant import User
+from app.api.deps import get_current_tenant_id, require_roles
 from app.models.users import Teacher
-from app.schemas.teacher import TeacherCreate, TeacherResponse
-
-# --- Magic Tenant Middleware ---
-from app.api.deps import get_current_tenant_id
+from app.models.tenant import User
 
 router = APIRouter()
 
-@router.post("/", response_model=TeacherResponse, status_code=status.HTTP_201_CREATED)
-def create_teacher(
-    teacher_in: TeacherCreate,
+# --- Pydantic Schemas ---
+class TeacherResponse(BaseModel):
+    id: uuid.UUID
+    first_name: str
+    last_name: str
+    email: Optional[str] = None
+    designation: Optional[str] = "Senior Teacher"
+    phone_number: Optional[str] = ""
+    assigned_class: Optional[str] = "Unassigned"
+    subjects_taught: Optional[str] = ""
+    status: Optional[str] = "Active"
+
+    class Config:
+        from_attributes = True
+
+class TeacherCreate(BaseModel):
+    first_name: str
+    last_name: str
+    email: str
+    password: Optional[str] = "Teacher@123"
+    designation: Optional[str] = "Senior Teacher"
+    phone_number: Optional[str] = ""
+    assigned_class: Optional[str] = "Unassigned"
+    subjects_taught: Optional[str] = ""
+
+class TeacherUpdate(BaseModel):
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    designation: Optional[str] = None
+    phone_number: Optional[str] = None
+    assigned_class: Optional[str] = None
+    subjects_taught: Optional[str] = None
+    status: Optional[str] = None
+
+# --- Endpoints ---
+
+@router.get("/", response_model=List[TeacherResponse])
+def list_teachers(
     db: Session = Depends(get_db),
-    tenant_id: str = Depends(get_current_tenant_id)
+    tenant_id: str = Depends(get_current_tenant_id),
+    _=Depends(require_roles(["admin", "teacher"]))
 ):
     """
-    Add a new Teacher to the school. Creates both User login and Teacher profile.
+    Returns faculty list. load_only ensures we only select the verified 
+    columns from User (email, id) without blowing up on optional name columns.
     """
-    # 1. Check if email already exists in this school
-    existing_user = db.query(User).filter(User.email == teacher_in.email, User.tenant_id == tenant_id).first()
-    if existing_user:
-        raise HTTPException(status_code=400, detail="Email already registered in this school.")
+    teachers = (
+        db.query(Teacher)
+        .options(
+            joinedload(Teacher.user).load_only(User.id, User.email)
+        )
+        .filter(Teacher.tenant_id == str(tenant_id))
+        .order_by(Teacher.first_name.asc())
+        .all()
+    )
+    return teachers
 
-    # 2. Create User account
+@router.post("/", response_model=TeacherResponse, status_code=status.HTTP_201_CREATED)
+def create_teacher(
+    payload: TeacherCreate,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_current_tenant_id),
+    _=Depends(require_roles(["admin"]))
+):
+    """
+    Creates a User credential account and links it to the new Teacher profile.
+    """
+    existing_user = db.query(User).filter(
+        User.email == payload.email, 
+        User.tenant_id == str(tenant_id)
+    ).first()
+    
+    if existing_user:
+        raise HTTPException(status_code=400, detail="A user with this email already exists.")
+
+    # 1. Create User account with role as plain string
     new_user = User(
-        email=teacher_in.email,
-        password_hash=get_password_hash(teacher_in.password),
-        tenant_id=tenant_id
+        email=payload.email,
+        password_hash=get_password_hash(payload.password),
+        tenant_id=str(tenant_id),
+        role="teacher"
     )
     db.add(new_user)
-    db.flush() 
+    db.flush()
 
-    # 3. Create Teacher Profile
+    # 2. Create Teacher profile (do NOT pass email or password here)
     new_teacher = Teacher(
-        tenant_id=tenant_id,
+        tenant_id=str(tenant_id),
         user_id=new_user.id,
-        first_name=teacher_in.first_name,
-        last_name=teacher_in.last_name,
-        designation=teacher_in.designation
+        first_name=payload.first_name,
+        last_name=payload.last_name,
+        designation=payload.designation or "Senior Teacher",
+        phone_number=payload.phone_number or "",
+        assigned_class=payload.assigned_class or "Unassigned",
+        subjects_taught=payload.subjects_taught or "",
+        status="Active"
     )
     db.add(new_teacher)
-    
     db.commit()
     db.refresh(new_teacher)
     return new_teacher
 
-@router.get("/", response_model=List[TeacherResponse])
-def get_teachers(
-    skip: int = 0, limit: int = 100,
+@router.patch("/{teacher_id}", response_model=TeacherResponse)
+def update_teacher(
+    teacher_id: uuid.UUID,
+    payload: TeacherUpdate,
     db: Session = Depends(get_db),
-    tenant_id: str = Depends(get_current_tenant_id)
+    tenant_id: str = Depends(get_current_tenant_id),
+    _=Depends(require_roles(["admin"]))
 ):
-    """
-    Get a list of all teachers in the logged-in user's school.
-    """
-    teachers = db.query(Teacher).filter(Teacher.tenant_id == tenant_id).offset(skip).limit(limit).all()
-    return teachers
+    teacher = (
+        db.query(Teacher)
+        .options(joinedload(Teacher.user))
+        .filter(Teacher.id == teacher_id, Teacher.tenant_id == str(tenant_id))
+        .first()
+    )
+    if not teacher:
+        raise HTTPException(status_code=404, detail="Teacher not found")
+
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(teacher, field, value)
+
+    db.commit()
+    db.refresh(teacher)
+    return teacher
+
+@router.delete("/{teacher_id}")
+def delete_teacher(
+    teacher_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_current_tenant_id),
+    _=Depends(require_roles(["admin"]))
+):
+    teacher = db.query(Teacher).filter(
+        Teacher.id == teacher_id, 
+        Teacher.tenant_id == str(tenant_id)
+    ).first()
+    
+    if not teacher:
+        raise HTTPException(status_code=404, detail="Teacher not found")
+
+    # Linked User cleanup
+    if teacher.user_id:
+        user = db.query(User).filter(User.id == teacher.user_id).first()
+        if user:
+            db.delete(user)
+
+    db.delete(teacher)
+    db.commit()
+    return {"message": f"Teacher {teacher.first_name} {teacher.last_name} removed successfully"}

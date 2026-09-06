@@ -1,122 +1,179 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useLanguage } from "@/components/providers";
-import { Users, GraduationCap, TrendingUp, Sparkles, AlertTriangle, ArrowRight, Activity, Loader2 } from "lucide-react";
+import { 
+  Users, UserCheck, UserX, GraduationCap, 
+  Clock, Plus, FileText, CheckSquare, MessageSquare, AlertCircle, Loader2 
+} from "lucide-react";
 
-export default function DashboardOverview() {
+interface DashboardMetrics {
+  total_students: number;
+  present_today: number;
+  absent_today: number;
+  total_teachers: number;
+  pending_approvals: number;
+  system_status: string;
+}
+
+export default function DailyOperationsDashboard() {
   const { language } = useLanguage();
-  const [stats, setStats] = useState<any>(null);
+  const [metrics, setMetrics] = useState<DashboardMetrics | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const fetchAnalytics = async () => {
+    const fetchMetrics = async () => {
       try {
         const token = localStorage.getItem("token");
-        const res = await fetch("http://127.0.0.1:8000/api/v1/analytics/overview", {
-          headers: { Authorization: `Bearer ${token}` }
+        const res = await fetch("http://127.0.0.1:8000/api/v1/dashboard/metrics", {
+          headers: { 
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}` 
+          }
         });
-        if (res.ok) setStats(await res.json());
+        
+        if (!res.ok) {
+          throw new Error("Failed to load real-time school metrics");
+        }
+        
+        const data = await res.json();
+        setMetrics(data);
+      } catch (err: any) {
+        setError(err.message || "Failed to communicate with school server");
       } finally {
         setLoading(false);
       }
     };
-    fetchAnalytics();
+
+    fetchMetrics();
   }, []);
 
   if (loading) {
-    return <div className="h-full flex items-center justify-center"><Loader2 className="animate-spin text-blue-500" size={32} /></div>;
+    return (
+      <div className="h-[60vh] flex flex-col items-center justify-center gap-3 text-gray-500">
+        <Loader2 className="animate-spin text-blue-600 dark:text-purple-400" size={32} />
+        <p className="text-sm font-medium">Syncing school records...</p>
+      </div>
+    );
   }
 
-  // Safety check to prevent white screen
-  if (!stats) {
+  if (error || !metrics) {
     return (
-      <div className="h-full flex flex-col items-center justify-center text-gray-500">
-        <AlertTriangle size={48} className="text-red-500 mb-4 opacity-50" />
-        <p>Analytics Engine Offline. Check backend connection.</p>
+      <div className="p-6 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 rounded-2xl flex items-center gap-4 text-red-700 dark:text-red-400">
+        <AlertCircle size={24} />
+        <div>
+          <h3 className="font-semibold">Live Operational Engine Disconnected</h3>
+          <p className="text-sm">{error || "Could not retrieve live database statistics."}</p>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-500">
+    <div className="space-y-8 animate-in fade-in duration-300">
       
-      {/* Welcome Banner */}
-      <div className="bg-gradient-to-r from-blue-600 to-indigo-700 rounded-3xl p-8 sm:p-10 text-white relative overflow-hidden shadow-lg">
-        <div className="absolute top-0 right-0 w-64 h-64 bg-white opacity-5 blur-[80px] rounded-full pointer-events-none"></div>
-        <div className="relative z-10 max-w-2xl">
-          <h1 className="text-3xl sm:text-4xl font-extrabold tracking-tight mb-2">
-            {language === "EN" ? "Welcome to the Future of Education." : "শিক্ষার ভবিষ্যতে স্বাগতম।"}
+      {/* Header Info */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-gray-200 dark:border-white/[0.08] pb-6">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-gray-900 dark:text-white">
+            {language === "EN" ? "Today's School Operations" : "আজকের প্রাতিষ্ঠানিক কার্যক্রম"}
           </h1>
-          <p className="text-blue-100 text-lg mb-8">
-            {language === "EN" ? "Your AI Operating System is actively monitoring campus operations." : "আপনার এআই অপারেটিং সিস্টেম সক্রিয়ভাবে ক্যাম্পাস পর্যবেক্ষণ করছে।"}
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+            Kids Shine International School • {new Date().toLocaleDateString(language === "EN" ? "en-US" : "bn-BD", { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
           </p>
-          <div className="inline-flex items-center gap-2 bg-black/20 backdrop-blur-md border border-white/10 px-4 py-2 rounded-xl text-sm font-mono font-semibold">
-            <span className="flex w-2 h-2 rounded-full bg-green-400 animate-pulse"></span>
-            Tenant ID: kidsshine
-          </div>
+        </div>
+
+        <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-green-50 dark:bg-green-500/10 border border-green-200 dark:border-green-500/20 text-xs font-semibold text-green-700 dark:text-green-400">
+          <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+          {metrics.system_status}
         </div>
       </div>
 
-      {/* Core Metrics */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <div className="bg-white dark:bg-[#0f0f11] border border-gray-200 dark:border-white/[0.08] p-6 rounded-3xl shadow-sm hover:shadow-md transition-shadow">
-          <div className="flex justify-between items-start mb-4">
-            <div className="p-3 bg-blue-50 dark:bg-blue-500/10 rounded-xl"><Users className="text-blue-600 dark:text-blue-400" size={20} /></div>
-            <span className="flex items-center gap-1 text-xs font-bold text-green-600 bg-green-50 dark:bg-green-500/10 px-2 py-1 rounded-lg"><TrendingUp size={12} /> +12%</span>
-          </div>
-          <p className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{language === "EN" ? "Total Enrolled" : "মোট শিক্ষার্থী"}</p>
-          <h3 className="text-3xl font-bold text-gray-900 dark:text-white mt-1">{stats.total_students}</h3>
-        </div>
-
-        <div className="bg-white dark:bg-[#0f0f11] border border-gray-200 dark:border-white/[0.08] p-6 rounded-3xl shadow-sm hover:shadow-md transition-shadow">
-          <div className="flex justify-between items-start mb-4">
-            <div className="p-3 bg-purple-50 dark:bg-purple-500/10 rounded-xl"><GraduationCap className="text-purple-600 dark:text-purple-400" size={20} /></div>
-          </div>
-          <p className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{language === "EN" ? "Active Educators" : "সক্রিয় শিক্ষক"}</p>
-          <h3 className="text-3xl font-bold text-gray-900 dark:text-white mt-1">{stats.total_teachers}</h3>
-        </div>
-
-        <div className="bg-white dark:bg-[#0f0f11] border border-gray-200 dark:border-white/[0.08] p-6 rounded-3xl shadow-sm hover:shadow-md transition-shadow">
-          <div className="flex justify-between items-start mb-4">
-            <div className="p-3 bg-teal-50 dark:bg-teal-500/10 rounded-xl"><Activity className="text-teal-600 dark:text-teal-400" size={20} /></div>
-          </div>
-          <p className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider">{language === "EN" ? "Campus Attendance" : "ক্যাম্পাস উপস্থিতি"}</p>
-          <h3 className="text-3xl font-bold text-gray-900 dark:text-white mt-1">{stats.attendance_rate}%</h3>
-        </div>
-      </div>
-
-      {/* AI Predictive Analytics Card */}
-      <div className="bg-gradient-to-br from-purple-50 to-white dark:from-[#150c25] dark:to-[#0f0f11] border border-purple-200 dark:border-purple-500/20 rounded-3xl p-8 relative overflow-hidden shadow-sm">
-        <Sparkles className="absolute top-6 right-6 text-purple-500/20 animate-pulse" size={64} />
+      {/* Core Real Metrics Grid */}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         
-        <div className="relative z-10 flex flex-col md:flex-row gap-8 items-start md:items-center justify-between">
-          <div className="max-w-2xl">
-            <div className="flex items-center gap-2 text-purple-600 dark:text-purple-400 font-bold uppercase tracking-wider text-xs mb-3">
-              <BrainCircuitIcon /> Predictive Intelligence
-            </div>
-            <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-3 leading-snug">
-              {stats.predictive_insight}
-            </h2>
-            <p className="text-gray-600 dark:text-gray-400 text-sm flex items-center gap-2">
-              <span className="w-1.5 h-1.5 rounded-full bg-orange-500"></span>
-              Recommended Action: {stats.action_required}
-            </p>
+        <div className="p-5 bg-white dark:bg-[#0f0f11] border border-gray-200 dark:border-white/[0.08] rounded-2xl shadow-sm">
+          <div className="flex items-center justify-between text-gray-500 dark:text-gray-400 mb-2">
+            <span className="text-xs font-semibold uppercase tracking-wider">{language === "EN" ? "Students" : "শিক্ষার্থী"}</span>
+            <Users size={16} />
           </div>
-          
-          <button className="shrink-0 bg-purple-600 hover:bg-purple-700 text-white px-6 py-3 rounded-xl font-semibold transition-all shadow-md shadow-purple-500/20 flex items-center gap-2">
-            Execute Strategy <ArrowRight size={18} />
-          </button>
+          <div className="text-3xl font-extrabold text-gray-900 dark:text-white">{metrics.total_students}</div>
+          <p className="text-[11px] text-gray-400 mt-1">{language === "EN" ? "Enrolled Base" : "মোট নথিভুক্ত"}</p>
+        </div>
+
+        <div className="p-5 bg-white dark:bg-[#0f0f11] border border-gray-200 dark:border-white/[0.08] rounded-2xl shadow-sm">
+          <div className="flex items-center justify-between text-green-600 dark:text-green-400 mb-2">
+            <span className="text-xs font-semibold uppercase tracking-wider">{language === "EN" ? "Present" : "উপস্থিত"}</span>
+            <UserCheck size={16} />
+          </div>
+          <div className="text-3xl font-extrabold text-gray-900 dark:text-white">{metrics.present_today}</div>
+          <p className="text-[11px] text-gray-400 mt-1">{language === "EN" ? "Today's Check-ins" : "আজকে উপস্থিত"}</p>
+        </div>
+
+        <div className="p-5 bg-white dark:bg-[#0f0f11] border border-gray-200 dark:border-white/[0.08] rounded-2xl shadow-sm">
+          <div className="flex items-center justify-between text-red-600 dark:text-red-400 mb-2">
+            <span className="text-xs font-semibold uppercase tracking-wider">{language === "EN" ? "Absent" : "অনুপস্থিত"}</span>
+            <UserX size={16} />
+          </div>
+          <div className="text-3xl font-extrabold text-gray-900 dark:text-white">{metrics.absent_today}</div>
+          <p className="text-[11px] text-gray-400 mt-1">{language === "EN" ? "Requires Follow-up" : "অনুপস্থিত আজ"}</p>
+        </div>
+
+        <div className="p-5 bg-white dark:bg-[#0f0f11] border border-gray-200 dark:border-white/[0.08] rounded-2xl shadow-sm">
+          <div className="flex items-center justify-between text-gray-500 dark:text-gray-400 mb-2">
+            <span className="text-xs font-semibold uppercase tracking-wider">{language === "EN" ? "Teachers" : "শিক্ষক"}</span>
+            <GraduationCap size={16} />
+          </div>
+          <div className="text-3xl font-extrabold text-gray-900 dark:text-white">{metrics.total_teachers}</div>
+          <p className="text-[11px] text-gray-400 mt-1">{language === "EN" ? "Active Educators" : "সক্রিয় শিক্ষক"}</p>
+        </div>
+
+        <div className="p-5 bg-white dark:bg-[#0f0f11] border border-gray-200 dark:border-white/[0.08] rounded-2xl shadow-sm">
+          <div className="flex items-center justify-between text-orange-500 mb-2">
+            <span className="text-xs font-semibold uppercase tracking-wider">{language === "EN" ? "Approvals" : "অনুমোদন"}</span>
+            <Clock size={16} />
+          </div>
+          <div className="text-3xl font-extrabold text-gray-900 dark:text-white">{metrics.pending_approvals}</div>
+          <p className="text-[11px] text-gray-400 mt-1">{language === "EN" ? "Action Center Queue" : "অপেক্ষমাণ কাজ"}</p>
+        </div>
+
+      </div>
+
+      {/* Quick Actions (Core Operations) */}
+      <div className="bg-white dark:bg-[#0f0f11] border border-gray-200 dark:border-white/[0.08] rounded-3xl p-6 shadow-sm">
+        <h2 className="text-sm font-bold uppercase tracking-wider text-gray-500 dark:text-gray-400 mb-4">
+          {language === "EN" ? "⚡ Direct Operational Shortcuts" : "⚡ দৈনন্দিন অপারেশনাল শর্টকাট"}
+        </h2>
+        
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          <Link href="/dashboard/students" className="p-4 rounded-2xl border border-gray-200 dark:border-white/10 hover:border-blue-500 dark:hover:border-purple-500 transition-colors flex flex-col gap-2 group">
+            <Plus className="text-blue-600 dark:text-purple-400 group-hover:scale-110 transition-transform" size={20} />
+            <span className="text-sm font-semibold text-gray-900 dark:text-white">{language === "EN" ? "New Admission" : "নতুন ভর্তি"}</span>
+            <span className="text-xs text-gray-500 dark:text-gray-400">Add student & link guardian</span>
+          </Link>
+
+          <Link href="/dashboard/attendance" className="p-4 rounded-2xl border border-gray-200 dark:border-white/10 hover:border-blue-500 dark:hover:border-purple-500 transition-colors flex flex-col gap-2 group">
+            <CheckSquare className="text-green-600 group-hover:scale-110 transition-transform" size={20} />
+            <span className="text-sm font-semibold text-gray-900 dark:text-white">{language === "EN" ? "Take Attendance" : "হাজিরা গ্রহণ"}</span>
+            <span className="text-xs text-gray-500 dark:text-gray-400">Class ledger replacement</span>
+          </Link>
+
+          <Link href="/dashboard/approvals" className="p-4 rounded-2xl border border-gray-200 dark:border-white/10 hover:border-blue-500 dark:hover:border-purple-500 transition-colors flex flex-col gap-2 group">
+            <FileText className="text-orange-500 group-hover:scale-110 transition-transform" size={20} />
+            <span className="text-sm font-semibold text-gray-900 dark:text-white">{language === "EN" ? "Action Center" : "অ্যাকশন সেন্টার"}</span>
+            <span className="text-xs text-gray-500 dark:text-gray-400">{metrics.pending_approvals} tasks awaiting review</span>
+          </Link>
+
+          <Link href="/dashboard/communication" className="p-4 rounded-2xl border border-gray-200 dark:border-white/10 hover:border-blue-500 dark:hover:border-purple-500 transition-colors flex flex-col gap-2 group">
+            <MessageSquare className="text-teal-500 group-hover:scale-110 transition-transform" size={20} />
+            <span className="text-sm font-semibold text-gray-900 dark:text-white">{language === "EN" ? "Guardian Inbox" : "অভিভাবক ইনবক্স"}</span>
+            <span className="text-xs text-gray-500 dark:text-gray-400">View & reply to queries</span>
+          </Link>
         </div>
       </div>
 
     </div>
   );
-}
-
-// Inline Icon Helper
-function BrainCircuitIcon() {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 4.5a2.5 2.5 0 0 0-4.96-.46 2.5 2.5 0 0 0-1.98 3 2.5 2.5 0 0 0-1.32 4.24 3 3 0 0 0 .34 5.58 2.5 2.5 0 0 0 2.96 3.08 2.5 2.5 0 0 0 4.91.05L12 20V4.5Z"/><path d="M16 8V5c0-1.1.9-2 2-2"/><path d="M12 13h4"/><path d="M12 18h6a2 2 0 0 1 2 2v1"/><path d="M22 5h-4"/><path d="M22 9h-4"/><path d="M22 14h-4"/></svg>
-  )
 }
