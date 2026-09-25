@@ -1,9 +1,10 @@
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
-from pydantic import BaseModel, EmailStr
-from datetime import date, datetime
 import uuid
+from datetime import date, datetime
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.orm import Session
+from sqlalchemy import or_
+from pydantic import BaseModel
 
 from app.core.database import get_db
 from app.api.deps import get_current_tenant_id, require_roles
@@ -12,10 +13,14 @@ from app.models.guardian import Guardian, GuardianStudentLink, GuardianRelations
 from app.models.attendance import AttendanceEvent
 from app.models.result import StudentResult
 from app.models.finance import FeePayment
+from app.schemas.student import (
+    StudentBulkImportRequest,
+    StudentBulkImportResponse
+)
 
 router = APIRouter()
 
-# --- Pydantic Schemas ---
+# --- Schemas ---
 class GuardianInput(BaseModel):
     first_name: str
     last_name: str
@@ -52,6 +57,18 @@ class StudentListItem(BaseModel):
     class Config:
         from_attributes = True
 
+class StudentUpdatePayload(BaseModel):
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    class_name: Optional[str] = None
+    section: Optional[str] = None
+    roll_number: Optional[str] = None
+    gender: Optional[str] = None
+    date_of_birth: Optional[date] = None
+    blood_group: Optional[str] = None
+    birth_certificate_no: Optional[str] = None
+    status: Optional[str] = None
+
 # --- Endpoints ---
 
 @router.get("/", response_model=List[StudentListItem])
@@ -62,25 +79,27 @@ def list_students(
     tenant_id: str = Depends(get_current_tenant_id),
     _=Depends(require_roles(["admin", "teacher"]))
 ):
-    query = db.query(Student).filter(Student.tenant_id == tenant_id, Student.status == "Active")
+    query = db.query(Student).filter(Student.tenant_id == str(tenant_id), Student.status == "Active")
 
     if class_name:
         query = query.filter(Student.class_name == class_name)
     if search:
+        search_filter = f"%{search.strip()}%"
         query = query.filter(
-            (Student.first_name.ilike(f"%{search}%")) |
-            (Student.last_name.ilike(f"%{search}%")) |
-            (Student.admission_number.ilike(f"%{search}%"))
+            or_(
+                Student.first_name.ilike(search_filter),
+                Student.last_name.ilike(search_filter),
+                Student.admission_number.ilike(search_filter)
+            )
         )
 
     students = query.order_by(Student.roll_number.asc(), Student.admission_number.asc()).all()
 
     response = []
     for s in students:
-        # Find primary guardian
         link = db.query(GuardianStudentLink).filter(
             GuardianStudentLink.student_id == s.id,
-            GuardianStudentLink.tenant_id == tenant_id
+            GuardianStudentLink.tenant_id == str(tenant_id)
         ).first()
         
         guardian_name = None
@@ -112,14 +131,9 @@ def admit_student(
     tenant_id: str = Depends(get_current_tenant_id),
     _=Depends(require_roles(["admin"]))
 ):
-    """
-    Atomic Admission Pipeline:
-    Creates Student, links/creates Guardian, and binds relationship.
-    """
-    # 1. Duplicate Admission Number Check
     existing_student = db.query(Student).filter(
-        Student.tenant_id == tenant_id,
-        Student.admission_number == payload.admission_number
+        Student.tenant_id == str(tenant_id),
+        Student.admission_number == payload.admission_number.strip()
     ).first()
     if existing_student:
         raise HTTPException(
@@ -127,30 +141,31 @@ def admit_student(
             detail=f"Admission ID '{payload.admission_number}' already exists in this institution."
         )
 
-    # 2. Find or Create Guardian (Smart Linkage by Phone Number)
+    # 1. Guardian Handling
+    clean_phone = payload.guardian.phone_number.strip()
     guardian = db.query(Guardian).filter(
-        Guardian.tenant_id == tenant_id,
-        Guardian.phone_number == payload.guardian.phone_number
+        Guardian.tenant_id == str(tenant_id),
+        Guardian.phone_number == clean_phone
     ).first()
 
     if not guardian:
         guardian = Guardian(
-            tenant_id=tenant_id,
+            tenant_id=str(tenant_id),
             first_name=payload.guardian.first_name,
             last_name=payload.guardian.last_name,
-            phone_number=payload.guardian.phone_number,
+            phone_number=clean_phone,
             profession=payload.guardian.profession,
             nid_number=payload.guardian.nid_number
         )
         db.add(guardian)
-        db.flush() # Generates guardian.id
+        db.flush()
 
-    # 3. Create Student Record
+    # 2. Student Handling
     student = Student(
-        tenant_id=tenant_id,
+        tenant_id=str(tenant_id),
         first_name=payload.first_name,
         last_name=payload.last_name,
-        admission_number=payload.admission_number,
+        admission_number=payload.admission_number.strip(),
         class_name=payload.class_name,
         section=payload.section,
         roll_number=payload.roll_number,
@@ -161,19 +176,19 @@ def admit_student(
         status="Active"
     )
     db.add(student)
-    db.flush() # Generates student.id
+    db.flush()
 
-    # 4. Link Student and Guardian
+    # 3. Linkage
     link = GuardianStudentLink(
-        tenant_id=tenant_id,
+        tenant_id=str(tenant_id),
         guardian_id=guardian.id,
         student_id=student.id,
         relationship_type=payload.guardian.relationship_type,
         is_primary_contact="Yes"
     )
     db.add(link)
-
     db.commit()
+
     return {
         "message": "Student admitted successfully",
         "student_id": student.id,
@@ -181,13 +196,40 @@ def admit_student(
         "guardian_linked": f"{guardian.first_name} {guardian.last_name}"
     }
 
-class StudentUpdatePayload(BaseModel):
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
-    class_name: Optional[str] = None
-    roll_number: Optional[str] = None
-    birth_certificate_no: Optional[str] = None
-    status: Optional[str] = None
+@router.post("/bulk-import", response_model=StudentBulkImportResponse, status_code=status.HTTP_201_CREATED)
+def bulk_import_students(
+    payload: StudentBulkImportRequest,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_current_tenant_id),
+    _=Depends(require_roles(["admin"]))
+):
+    imported_count = 0
+    skipped_count = 0
+    errors = []
+
+    for item in payload.students:
+        adm = item.admission_number.strip()
+        existing = db.query(Student).filter(
+            Student.tenant_id == str(tenant_id),
+            Student.admission_number == adm
+        ).first()
+
+        if existing:
+            skipped_count += 1
+            errors.append(f"Admission ID '{adm}' already registered (Skipped).")
+            continue
+
+        student = Student(tenant_id=str(tenant_id), **item.model_dump())
+        db.add(student)
+        imported_count += 1
+
+    db.commit()
+    return StudentBulkImportResponse(
+        total_submitted=len(payload.students),
+        imported_count=imported_count,
+        skipped_count=skipped_count,
+        errors=errors
+    )
 
 @router.patch("/{student_id}")
 def update_student(
@@ -197,7 +239,7 @@ def update_student(
     tenant_id: str = Depends(get_current_tenant_id),
     _=Depends(require_roles(["admin"]))
 ):
-    student = db.query(Student).filter(Student.id == student_id, Student.tenant_id == tenant_id).first()
+    student = db.query(Student).filter(Student.id == student_id, Student.tenant_id == str(tenant_id)).first()
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
     
@@ -216,15 +258,13 @@ def delete_student(
     tenant_id: str = Depends(get_current_tenant_id),
     _=Depends(require_roles(["admin"]))
 ):
-    student = db.query(Student).filter(Student.id == student_id, Student.tenant_id == tenant_id).first()
+    student = db.query(Student).filter(Student.id == student_id, Student.tenant_id == str(tenant_id)).first()
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
     
-    # Cascade deletes student and their link records
     db.delete(student)
     db.commit()
     return {"message": f"Student {student.admission_number} removed successfully"}
-
 
 @router.get("/{student_id}/profile-360")
 def get_student_360_profile(
@@ -233,10 +273,6 @@ def get_student_360_profile(
     tenant_id: str = Depends(get_current_tenant_id),
     _=Depends(require_roles(["admin", "teacher", "guardian"]))
 ):
-    """
-    Returns complete institutional 360-degree digital twin for a student:
-    Demographics, Linked Guardian, Attendance Ratio, Fees History & Exam Grades.
-    """
     student = db.query(Student).filter(
         Student.id == student_id, 
         Student.tenant_id == str(tenant_id)
@@ -252,23 +288,41 @@ def get_student_360_profile(
     ).first()
     guardian = db.query(Guardian).filter(Guardian.id == link.guardian_id).first() if link else None
 
-    # 2. Attendance Stats
+    # 2. Attendance Stats (Native UUID Match)
     total_days = db.query(AttendanceEvent).filter(
         AttendanceEvent.tenant_id == str(tenant_id),
-        AttendanceEvent.student_id == str(student.id)
+        AttendanceEvent.student_id == student.id
     ).count()
+    
     present_days = db.query(AttendanceEvent).filter(
         AttendanceEvent.tenant_id == str(tenant_id),
-        AttendanceEvent.student_id == str(student.id),
+        AttendanceEvent.student_id == student.id,
         AttendanceEvent.status == "Present"
     ).count()
+    
     attendance_rate = round((present_days / total_days * 100), 1) if total_days > 0 else 100.0
 
-    # 3. Fee Payments Ledger
+    # 3. Fee Payments Ledger (Safe Column Fallback)
+    date_col = getattr(FeePayment, "payment_date", getattr(FeePayment, "created_at", FeePayment.id))
+
     payments = db.query(FeePayment).filter(
         FeePayment.tenant_id == str(tenant_id),
         FeePayment.student_id == student.id
-    ).order_by(FeePayment.payment_date.desc()).limit(5).all()
+    ).order_by(date_col.desc()).limit(5).all()
+
+    # 🚀 FIX: Correct Serialization (No AttributeError on p.fee_records)
+    fee_records = []
+    for p in payments:
+        raw_date = getattr(p, "payment_date", getattr(p, "created_at", None))
+        formatted_date = raw_date.strftime("%d %b, %Y") if raw_date else "—"
+        
+        fee_records.append({
+            "receipt_no": p.receipt_no,
+            "fee_type": p.fee_type,
+            "month": p.billing_month,
+            "amount": p.amount_paid,
+            "date": formatted_date
+        })
 
     # 4. Academic Grades
     results = db.query(StudentResult).filter(
@@ -285,7 +339,7 @@ def get_student_360_profile(
             "admission_number": student.admission_number,
             "class_name": student.class_name,
             "roll_number": student.roll_number or "—",
-            "gender": student.gender,
+            "gender": student.gender or "N/A",
             "blood_group": student.blood_group or "N/A",
             "birth_certificate_no": student.birth_certificate_no or "N/A",
             "status": student.status,
@@ -294,24 +348,15 @@ def get_student_360_profile(
         "guardian": {
             "name": f"{guardian.first_name} {guardian.last_name}" if guardian else "Not Linked",
             "phone": guardian.phone_number if guardian else "N/A",
-            "relationship": link.relationship_type.value if link else "N/A",
-            "profession": guardian.profession if guardian else "N/A"
+            "relationship": link.relationship_type.value if link else "Guardian",
+            "profession": getattr(guardian, "profession", "Guardian") if guardian else "N/A"
         },
         "attendance": {
             "total_working_days": total_days,
             "present_days": present_days,
             "attendance_rate": attendance_rate
         },
-        "fees": [
-            {
-                "receipt_no": p.receipt_no,
-                "fee_type": p.fee_type,
-                "month": p.billing_month,
-                "amount": p.amount_paid,
-                "date": p.payment_date.strftime("%d %b, %Y")
-            }
-            for p in payments
-        ],
+        "fees": fee_records, # 🚀 FIX: cleanly mapped array
         "academics": {
             "average_gpa": round(avg_gpa, 2),
             "subjects_evaluated": len(results),

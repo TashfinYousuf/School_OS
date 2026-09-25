@@ -1,9 +1,9 @@
-from sqlalchemy import create_engine
+# backend/app/core/database.py
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, declarative_base
 from app.core.config import settings
 
-# Create the SQLAlchemy engine
-# pool_pre_ping checks if the connection is alive before using it
+# Create the SQLAlchemy engine with connection pool hardening
 engine = create_engine(
     settings.DATABASE_URL, 
     pool_pre_ping=True,
@@ -11,17 +11,32 @@ engine = create_engine(
     max_overflow=20
 )
 
-# Create a configured "Session" class
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
 
-# Dependency to get a database session in our FastAPI routes
 def get_db():
     """
-    Provides a transactional scope around a series of operations.
-    Yields a database session and closes it automatically after the request.
+    Fallback standard database session for non-tenant background operations.
     """
     db = SessionLocal()
     try:
         yield db
+    finally:
+        db.close()
+
+def get_tenant_db(tenant_id: str):
+    """
+    Critical RLS Session Guard: Executes SET LOCAL within a transaction boundary.
+    Prevents data leakage across pooled database connections.
+    """
+    db = SessionLocal()
+    try:
+        db.begin()
+        db.execute(text("SET LOCAL app.current_tenant_id = :tenant_id"), {"tenant_id": tenant_id})
+        yield db
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()

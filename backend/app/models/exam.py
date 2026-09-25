@@ -20,7 +20,7 @@ class ExamResult(Base):
     tenant_id = Column(String, index=True, nullable=False)
     
     # Relationships
-    student_id = Column(String, index=True, nullable=False)
+    student_id = Column(UUID(as_uuid=True), ForeignKey("students.id"), nullable=False, index=True)
     exam_id = Column(UUID(as_uuid=True), ForeignKey("exams.id"), nullable=False)
     subject_id = Column(UUID(as_uuid=True), ForeignKey("subjects.id"), nullable=False)
     

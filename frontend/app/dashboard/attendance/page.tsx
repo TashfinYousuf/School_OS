@@ -2,7 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { useLanguage } from "@/components/providers";
-import { CheckCircle2, XCircle, Calendar, Save, Loader2, AlertCircle } from "lucide-react";
+import { CheckCircle2, XCircle, Calendar, Save, Loader2, AlertCircle, RefreshCw, WifiOff } from "lucide-react";
+import { 
+  saveToOfflineAttendanceQueue, 
+  flushOfflineAttendanceQueue, 
+  getOfflineAttendanceQueue 
+} from "@/lib/offlineQueue";
 
 interface StudentRecord {
   id: string;
@@ -21,8 +26,38 @@ export default function DailyAttendanceLedger() {
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [pendingSyncCount, setPendingSyncCount] = useState(0);
+  const [isOnline, setIsOnline] = useState(true);
 
   const classes = ["Play", "Nursery", "KG", "Class 1", "Class 2", "Class 3", "Class 4", "Class 5"];
+
+  // 🚀 ১. অনলাইন/অফলাইন মনিটরিং ও অটো-সিঙ্ক লিসেনার
+  useEffect(() => {
+    setIsOnline(navigator.onLine);
+    setPendingSyncCount(getOfflineAttendanceQueue().length);
+
+    const handleOnline = async () => {
+      setIsOnline(true);
+      const token = localStorage.getItem("token");
+      if (token) {
+        const synced = await flushOfflineAttendanceQueue(token);
+        if (synced > 0) {
+          setFeedback(language === "EN" ? `Synced ${synced} offline records successfully.` : `${synced}টি অফলাইন রেকর্ড সফলভাবে সিঙ্ক হয়েছে।`);
+          setPendingSyncCount(getOfflineAttendanceQueue().length);
+          localStorage.removeItem("schoolos_cache_/api/v1/dashboard/metrics");
+        }
+      }
+    };
+
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, [language]);
 
   const fetchSheet = async () => {
     setLoading(true);
@@ -41,6 +76,7 @@ export default function DailyAttendanceLedger() {
       }
     } catch (err) {
       console.error(err);
+      setFeedback(language === "EN" ? "Offline: Showing locally cached ledger." : "অফলাইন: লোকাল ক্যাশ প্রদর্শিত হচ্ছে।");
     } finally {
       setLoading(false);
     }
@@ -58,8 +94,41 @@ export default function DailyAttendanceLedger() {
     );
   };
 
+  // 🚀 ২. Idempotent Offline-Safe Submit Handler
   const handleSaveAttendance = async () => {
     setSubmitting(true);
+    setFeedback(null);
+
+    // Create records with unique client-side idempotency key
+    const recordsWithIdempotency = students.map((s) => ({
+      student_id: s.id,
+      status: s.status,
+      remarks: "",
+      idempotency_key: `${selectedClass}_${selectedDate}_${s.id}`
+    }));
+
+    const payload = {
+      attendance_date: selectedDate,
+      class_name: selectedClass,
+      records: recordsWithIdempotency
+    };
+
+    // যদি ডিভাইস অফলাইনে থাকে
+    if (!navigator.onLine) {
+      saveToOfflineAttendanceQueue({
+        queueId: `${selectedClass}_${selectedDate}`,
+        className: selectedClass,
+        attendanceDate: selectedDate,
+        records: recordsWithIdempotency,
+        queuedAt: new Date().toISOString()
+      });
+      setPendingSyncCount(getOfflineAttendanceQueue().length);
+      setFeedback(language === "EN" ? "Saved to offline queue. Will auto-sync when online." : "অফলাইন কিউতে সংরক্ষিত হয়েছে। নেট পেলে স্বয়ংক্রিয়ভাবে সিঙ্ক হবে।");
+      setSubmitting(false);
+      return;
+    }
+
+    // অনলাইনে সরাসরি সাবমিশন
     try {
       const token = localStorage.getItem("token");
       const res = await fetch("http://127.0.0.1:8000/api/v1/attendance/bulk-submit", {
@@ -68,21 +137,28 @@ export default function DailyAttendanceLedger() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`
         },
-        body: JSON.stringify({
-          attendance_date: selectedDate,
-          class_name: selectedClass,
-          records: students.map((s) => ({
-            student_id: s.id,
-            status: s.status
-          }))
-        })
+        body: JSON.stringify(payload)
       });
 
       if (res.ok) {
-        setFeedback(language === "EN" ? "Attendance saved successfully." : "হাজিরা সফলভাবে সংরক্ষিত হয়েছে।");
+        setFeedback(language === "EN" ? "Attendance saved successfully." : "হাজিরা সফলভাবে সংরক্ষিত হয়েছে।");
+        // ড্যাশবোর্ড যেন সাথে সাথে ফ্রেশ ডেটা ফেচ করে:
+        localStorage.removeItem("schoolos_cache_/api/v1/dashboard/metrics");
+        localStorage.removeItem("schoolos_cache_/api/v1/dashboard/operational-kpi");
+      } else {
+        throw new Error("Submission rejected");
       }
     } catch (err) {
-      setFeedback("Failed to record attendance.");
+      // নেটওয়ার্ক গ্লিচ ফলব্যাক: লোকাল কিউতে সেভ
+      saveToOfflineAttendanceQueue({
+        queueId: `${selectedClass}_${selectedDate}`,
+        className: selectedClass,
+        attendanceDate: selectedDate,
+        records: recordsWithIdempotency,
+        queuedAt: new Date().toISOString()
+      });
+      setPendingSyncCount(getOfflineAttendanceQueue().length);
+      setFeedback(language === "EN" ? "Server unreachable. Saved to offline queue." : "সার্ভারে সংযোগ না পাওয়ায় অফলাইন কিউতে সেভ করা হলো।");
     } finally {
       setSubmitting(false);
     }
@@ -91,9 +167,24 @@ export default function DailyAttendanceLedger() {
   const presentCount = students.filter((s) => s.status === "Present").length;
   const absentCount = students.length - presentCount;
 
+
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
-      
+      {/* Offline Alert Bar */}
+      {!isOnline && (
+        <div className="bg-amber-500/10 border border-amber-500/20 px-4 py-2.5 rounded-2xl flex items-center justify-between text-xs text-amber-600 dark:text-amber-400 font-medium">
+          <div className="flex items-center gap-2">
+            <WifiOff size={15} />
+            <span>অফলাইন মোড সক্রিয়: আপনি ইন্টারনেট ছাড়াই নিরাপদে হাজিরা নিতে পারছেন</span>
+          </div>
+          {pendingSyncCount > 0 && (
+            <span className="bg-amber-500/20 px-2 py-0.5 rounded text-[10px] font-bold">
+              {pendingSyncCount}টি ব্যাচ সিঙ্কের অপেক্ষায়
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Header & Filter Controls */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-gray-200 dark:border-white/[0.08] pb-6">
         <div>

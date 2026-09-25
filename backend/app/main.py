@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
 
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -44,6 +45,8 @@ from app.api.endpoints import approvals
 from app.api.endpoints import communication
 from app.api.endpoints import government
 from app.api.endpoints import analytics
+from app.api.endpoints import teacher_diary
+from app.api.endpoints import learning_studio
 
 from app.api.endpoints.dashboard import router as dashboard_router
 from app.api.endpoints.question_papers import router as qp_router
@@ -51,7 +54,49 @@ from app.api.endpoints.notices import router as notices_router
 from app.api.endpoints.results import router as results_router
 from app.api.endpoints.institution import router as institution_router
 from app.api.endpoints.finance import router as finance_router
+from app.api.endpoints.academy import router as academy_router
+from app.api.endpoints.campus import router as campus_router
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # 🚀 Self-Healing Database Schema Migration on every startup
+    print("⏳ Verifying and self-healing database schema...")
+    try:
+        with engine.begin() as conn:
+            # 1. attendance_events এ idempotency_key মিসিং থাকলে যোগ করা
+            conn.execute(text("""
+                ALTER TABLE attendance_events 
+                ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(128);
+            """))
+            conn.execute(text("""
+                CREATE INDEX IF NOT EXISTS ix_attendance_events_idempotency_key 
+                ON attendance_events (idempotency_key);
+            """))
+
+            # 2. student_id টাইপ UUID নিশ্চিত করা (character varying = uuid এরর রোধে)
+            conn.execute(text("""
+                ALTER TABLE attendance_events 
+                ALTER COLUMN student_id TYPE UUID USING student_id::UUID;
+            """))
+
+            # 3. fee_payments এ payment_date নিশ্চিত করা
+            conn.execute(text("""
+                ALTER TABLE fee_payments 
+                ADD COLUMN IF NOT EXISTS payment_date TIMESTAMP WITH TIME ZONE DEFAULT now();
+            """))
+
+            # 4. users টেবিলে first_name ও last_name নিশ্চিত করা
+            conn.execute(text("""
+                ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name VARCHAR DEFAULT '';
+                ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name VARCHAR DEFAULT '';
+            """))
+
+        print("✅ Database schema self-healed and perfectly synchronized.")
+    except Exception as e:
+        print(f"⚠️ Warning during self-healing migration: {e}")
+
+    yield
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
@@ -69,7 +114,7 @@ app.add_middleware(
 )
 
 # --- INCLUDE ROUTERS ---
-app.include_router(auth.router, prefix="/api/v1", tags=["Authentication"])
+app.include_router(auth.router, prefix=f"{settings.API_V1_STR}/auth", tags=["Authentication"])
 app.include_router(tenants.router, prefix=f"{settings.API_V1_STR}/tenants", tags=["Tenants (Schools)"])
 app.include_router(users.router, prefix=f"{settings.API_V1_STR}/users", tags=["Users & Auth"])
 app.include_router(academic.router, prefix=f"{settings.API_V1_STR}/academic", tags=["Academics & Curriculum"])
@@ -90,7 +135,10 @@ app.include_router(notices_router, prefix=f"{settings.API_V1_STR}/notices", tags
 app.include_router(results_router, prefix=f"{settings.API_V1_STR}/results", tags=["Result & Grading Engine"])
 app.include_router(institution_router, prefix=f"{settings.API_V1_STR}/institution", tags=["Institution Profile & Bulk Migration"])
 app.include_router(finance_router, prefix=f"{settings.API_V1_STR}/finance", tags=["Finance & Fee Ledger"])
-
+app.include_router(teacher_diary.router, prefix=f"{settings.API_V1_STR}/teacher-os", tags=["TeacherOS & Intelligence"])
+app.include_router(learning_studio.router, prefix=f"{settings.API_V1_STR}/learning-os", tags=["LearningOS & Student Studio"])
+app.include_router(academy_router, prefix=f"{settings.API_V1_STR}/academy", tags=["AcademyOS & Coaching Engine"])
+app.include_router(campus_router, prefix=f"{settings.API_V1_STR}/campus", tags=["Multiple Campus Branch"])
 
 @app.get("/")
 def root():

@@ -1,31 +1,78 @@
-import uuid
-from sqlalchemy import Column, String, DateTime, Float, ForeignKey, Text
-from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.sql import func
+from datetime import datetime, timezone
+from enum import Enum
+from typing import Optional
+from uuid import UUID, uuid4
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Enum as SAEnum,
+    ForeignKey,
+    Index,
+    Numeric,
+    String,
+    Text,
+)
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import Mapped, mapped_column
+
 from app.models.base import Base
+
+class PaymentMethod(str, Enum):
+    CASH = "CASH"
+    BANK_TRANSFER = "BANK_TRANSFER"
+    BKASH = "BKASH"
+    NAGAD = "NAGAD"
+
+class PaymentStatus(str, Enum):
+    PENDING = "PENDING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    REVERSED = "REVERSED"
 
 class FeePayment(Base):
     __tablename__ = "fee_payments"
     __table_args__ = {'extend_existing': True}
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(String, index=True, nullable=False)
-    student_id = Column(UUID(as_uuid=True), ForeignKey("students.id", ondelete="CASCADE"), nullable=False)
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4, index=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    student_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True) # string/UUID safe
     
-    receipt_no = Column(String, index=True, nullable=False) # e.g. REC-2026-A1B2C3
-    fee_type = Column(String, nullable=False)              # Monthly Tuition Fee, Exam Fee, etc.
-    billing_month = Column(String, nullable=False)         # e.g. "September 2026"
+    # Financial Precision
+    amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), default="BDT", nullable=False)
     
-    amount_paid = Column(Float, nullable=False)
-    currency = Column(String, default="BDT")               # BDT, USD, USDT
-    discount = Column(Float, default=0.0)
+    # Clean Fiat Rail Abstraction
+    payment_method: Mapped[PaymentMethod] = mapped_column(
+        SAEnum(PaymentMethod, name="payment_method_enum", native_enum=True),
+        nullable=False,
+        index=True
+    )
+    payment_status: Mapped[PaymentStatus] = mapped_column(
+        SAEnum(PaymentStatus, name="payment_status_enum", native_enum=True),
+        default=PaymentStatus.PENDING,
+        nullable=False,
+        index=True
+    )
     
-    # 🚀 Multi-Gateway Real-Time Verification Fields
-    payment_method = Column(String, nullable=False)        # Cash, bKash, Nagad, Bank, Crypto
-    transaction_id = Column(String, index=True, nullable=False) # TrxID / Deposit Slip No / Crypto TxHash
-    sender_number_or_wallet = Column(String, nullable=True)     # 017... / Bank A/C / 0x...
-    verification_status = Column(String, default="Verified")    # Verified, Pending
-    remarks = Column(Text, nullable=True)
+    # Gateway & Reconciliation Records
+    provider_transaction_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    bank_reference: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    collected_by_user_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    receipt_number: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
     
-    collected_by = Column(String, nullable=True)
-    payment_date = Column(DateTime(timezone=True), default=func.now())
+    # Additional Context
+    metadata_payload: Mapped[dict] = mapped_column(JSONB, default=dict, nullable=False)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    
+    # Idempotency & Audit
+    idempotency_key: Mapped[str] = mapped_column(String(128), unique=True, nullable=False, index=True)
+    is_reconciled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    reconciled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
+
+    __table_args__ = (
+        Index("ix_fee_payments_tenant_method_status", "tenant_id", "payment_method", "payment_status"),
+        Index("ix_fee_payments_tenant_created_at", "tenant_id", "created_at"),
+        {'extend_existing': True}
+    )

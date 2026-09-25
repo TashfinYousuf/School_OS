@@ -74,6 +74,7 @@ export default function StudentsRegistryPage() {
     setLoading(true);
     try {
       const token = localStorage.getItem("token");
+
       let url = `http://127.0.0.1:8000/api/v1/students/?`;
       if (selectedClass) url += `class_name=${encodeURIComponent(selectedClass)}&`;
       if (search) url += `search=${encodeURIComponent(search)}&`;

@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     Reads from environment variables or .env file automatically.
     """
     PROJECT_NAME: str = "SchoolOS - AI-Powered Education SaaS"
+    ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours, adjust to your needs
     API_V1_STR: str = "/api/v1"
     
     # Database Configurations

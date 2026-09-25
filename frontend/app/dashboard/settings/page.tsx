@@ -25,7 +25,7 @@ export default function SettingsFullPage() {
     address: "",
     contact_phone: "",
     contact_email: "",
-    academic_year: "2026"
+    academic_year: "2027"
   });
 
   useEffect(() => {
@@ -175,7 +175,6 @@ export default function SettingsFullPage() {
                 <div>
                   <label className="text-xs font-semibold text-gray-700 dark:text-gray-300">EIIN / Code</label>
                   <input
-                    value={profile.eiin_or_code}
                     onChange={(e) => setProfile({...profile, eiin_or_code: e.target.value})}
                     className="w-full mt-1 bg-gray-50 dark:bg-black/40 border border-gray-200 dark:border-white/10 rounded-xl p-2.5 text-sm outline-none"
                   />
@@ -193,7 +192,6 @@ export default function SettingsFullPage() {
               <div>
                 <label className="text-xs font-semibold text-gray-700 dark:text-gray-300">Motto / Tagline</label>
                 <input
-                  value={profile.tagline}
                   onChange={(e) => setProfile({...profile, tagline: e.target.value})}
                   className="w-full mt-1 bg-gray-50 dark:bg-black/40 border border-gray-200 dark:border-white/10 rounded-xl p-2.5 text-sm outline-none"
                 />
@@ -202,9 +200,8 @@ export default function SettingsFullPage() {
               <div>
                 <label className="text-xs font-semibold text-gray-700 dark:text-gray-300">Address</label>
                 <input
-                  value={profile.address}
                   onChange={(e) => setProfile({...profile, address: e.target.value})}
-                  className="w-full mt-1 bg-gray-50 dark:bg-black/40 border border-gray-200 dark:border-white/10 rounded-xl p-2.5 text-sm outline-none"
+                  className="w-full mt-1 bg-white dark:bg-black/40 border border-gray-200 dark:border-white/10 rounded-xl p-2.5 text-sm outline-none"
                 />
               </div>
 
@@ -266,7 +263,7 @@ export default function SettingsFullPage() {
         )}
 
         {activeTab === "ai" && (
-          <div className="space-y-6">
+          <div className="space-y-3 text-xs text-gray-500 dark:text-gray-400">
             <div>
               <h2 className="text-xl font-semibold text-purple-300">AI Engine Configuration</h2>
               <p className="text-sm text-gray-400">Manage LLM parameters and RAG knowledge base settings.</p>

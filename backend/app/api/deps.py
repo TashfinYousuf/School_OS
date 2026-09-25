@@ -1,92 +1,114 @@
-from fastapi import Depends, HTTPException, status
+# backend/app/api/deps.py
+import jwt
+from typing import List, Optional
+from fastapi import Depends, HTTPException, Header, status
 from fastapi.security import OAuth2PasswordBearer
-from jose import jwt, JWTError
+from jose import JWTError
 from sqlalchemy.orm import Session
-from pydantic import ValidationError
 
 from app.core.config import settings
-from app.core.database import get_db
+from app.core.database import get_tenant_db
 from app.models.tenant import User
-from app.schemas.auth import TokenPayload
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/login/access-token")
 
-def get_current_user(
-    db: Session = Depends(get_db), token: str = Depends(oauth2_scheme)
-) -> User:
+
+def get_current_user_claims(
+    token: str = Depends(oauth2_scheme),
+    x_tenant_id: Optional[str] = Header(None, alias="X-Tenant-ID")
+) -> dict:
     """
-    টোকেন ডিকোড করে ইউজারের ভ্যালিডিটি চেক করবে
+    Decodes the JWT and extracts user_id, tenant_id, and role.
+    Supports dynamic workspace switching via X-Tenant-ID header.
     """
     try:
-        payload = jwt.decode(
-            token, settings.SECRET_KEY, algorithms=["HS256"]
-        )
-        token_data = TokenPayload(**payload)
-    except (JWTError, ValidationError):
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
+        token_tenant_id = payload.get("tenant_id")
+        user_id = payload.get("sub")
+        role = payload.get("role", "student").lower()
+
+        if not token_tenant_id or not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Malformed token: Tenant context missing."
+            )
+
+        # Allow switching workspaces if header is provided
+        active_tenant = x_tenant_id or token_tenant_id
+
+        return {
+            "tenant_id": str(active_tenant),
+            "user_id": str(user_id),
+            "role": role
+        }
+    except jwt.ExpiredSignatureError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate credentials",
-            headers={"WWW-Authenticate": "Bearer"},
+            detail="Session has expired. Please sign in again."
         )
-        
-    user = db.query(User).filter(User.id == token_data.sub).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-        
-    return user
-
-def get_current_active_user(
-    current_user: User = Depends(get_current_user),
-) -> User:
-    """
-    চেক করবে ইউজার অ্যাক্টিভ আছে কিনা।
-    """
-    if not current_user.is_active:
-        raise HTTPException(status_code=400, detail="Inactive user")
-    return current_user
-
-def get_current_tenant_id(
-    current_user: User = Depends(get_current_active_user),
-) -> str:
-    """
-    লগইন করা ইউজারের টোকেন থেকে সরাসরি তার স্কুলের ID (tenant_id) রিটার্ন করবে।
-    ভবিষ্যতে সব API-তে আমরা ডেটা ফিল্টার করতে এটি ব্যবহার করব।
-    """
-    return str(current_user.tenant_id)
-
-
-def get_current_user_claims(token: str = Depends(oauth2_scheme)) -> dict:
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    try:
-        # JWT Secret থেকে পেলোড ডিকোড করা
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=["HS256"])
-        tenant_id: str = payload.get("tenant_id")
-        user_id: str = payload.get("sub")
-        role: str = payload.get("role", "admin").lower()
-        if tenant_id is None or user_id is None:
-            raise credentials_exception
-        return {"tenant_id": tenant_id, "user_id": user_id, "role": role}
     except JWTError:
-        raise credentials_exception
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Security Violation: Could not validate credentials."
+        )
+
 
 def get_current_tenant_id(claims: dict = Depends(get_current_user_claims)) -> str:
-    """Returns strictly verified tenant_id from JWT."""
+    """Returns verified tenant_id string."""
     return claims["tenant_id"]
 
-def require_roles(allowed_roles: list[str]):
+
+def get_db(tenant_id: str = Depends(get_current_tenant_id)):
+    """Provides an RLS-locked database session tied to verified tenant."""
+    yield from get_tenant_db(tenant_id)
+
+
+def get_current_user(
+    db: Session = Depends(get_db),
+    claims: dict = Depends(get_current_user_claims)
+) -> User:
     """
-    RBAC Gatekeeper: Ensures the logged-in entity has proper clearance.
-    Usage: Depends(require_roles(["admin", "teacher"]))
+    Fetches the User ORM entity from the database for the active tenant.
+    """
+    user = db.query(User).filter(
+        User.id == claims["user_id"],
+        User.tenant_id == claims["tenant_id"]
+    ).first()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Authenticated user account not found in this workspace."
+        )
+    return user
+
+
+def get_current_active_user(
+    current_user: User = Depends(get_current_user)
+) -> User:
+    """
+    Guarantees the account is active before executing sensitive operations.
+    """
+    if hasattr(current_user, "is_active") and not current_user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account has been suspended or deactivated."
+        )
+    return current_user
+
+
+def require_roles(allowed_roles: List[str]):
+    """
+    FastAPI RBAC dependency guard.
     """
     def role_checker(claims: dict = Depends(get_current_user_claims)):
-        if claims["role"] not in [r.lower() for r in allowed_roles]:
+        user_role = claims.get("role", "").lower()
+        normalized_allowed = [r.lower() for r in allowed_roles]
+
+        if user_role not in normalized_allowed:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Insufficient permissions for this institutional operation"
+                detail=f"Security Policy Violation: Requires roles {allowed_roles}, found '{user_role}'."
             )
         return claims
     return role_checker

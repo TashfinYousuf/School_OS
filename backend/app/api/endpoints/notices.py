@@ -1,16 +1,20 @@
-from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
-from pydantic import BaseModel
 import uuid
 import datetime
+
+from typing import List, Optional
+from datetime import date
+from fastapi import APIRouter, Depends, Query, HTTPException, status
+from sqlalchemy.orm import Session
+from pydantic import BaseModel
+
 from google import genai
 from google.genai import types
 
 from app.core.database import get_db
 from app.core.config import settings
-from app.api.deps import get_current_tenant_id, require_roles
+from app.api.deps import get_current_tenant_id, get_current_user_claims, require_roles
 from app.models.notice import Notice
+from app.schemas.notice import NoticeCreate, NoticeResponse
 
 router = APIRouter()
 
@@ -141,3 +145,44 @@ def list_notices(
     _=Depends(require_roles(["admin", "teacher"]))
 ):
     return db.query(Notice).filter(Notice.tenant_id == tenant_id).order_by(Notice.created_at.desc()).all()
+
+
+@router.get("/", response_model=List[NoticeResponse])
+def get_notices(
+    audience: Optional[str] = Query(None),
+    active_only: bool = Query(True),
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_current_tenant_id),
+    _=Depends(get_current_user_claims)
+):
+    query = db.query(Notice).filter(
+        Notice.tenant_id == str(tenant_id),
+        Notice.is_published == True
+    )
+
+    if active_only:
+        query = query.filter(
+            (Notice.expiry_date == None) | (Notice.expiry_date >= date.today())
+        )
+    if audience:
+        query = query.filter(Notice.target_audience.in_(["ALL", audience]))
+
+    return query.order_by(Notice.published_at.desc()).all()
+
+@router.post("/", response_model=NoticeResponse, status_code=status.HTTP_201_CREATED)
+def publish_notice(
+    payload: NoticeCreate,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_current_tenant_id),
+    claims: dict = Depends(require_roles(["admin", "teacher"]))
+):
+    author_id = uuid.UUID(str(claims["user_id"]))
+    notice = Notice(
+        tenant_id=str(tenant_id),
+        created_by_user_id=author_id,
+        **payload.model_dump()
+    )
+    db.add(notice)
+    db.commit()
+    db.refresh(notice)
+    return notice
