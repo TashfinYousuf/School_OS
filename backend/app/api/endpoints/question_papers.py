@@ -3,7 +3,7 @@ import json
 import re
 import os
 import datetime
-import random
+import logging
 
 from typing import List, Optional, Any, Dict
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -16,8 +16,13 @@ from app.core.database import get_db
 from app.core.config import settings
 from app.api.deps import get_current_tenant_id, require_roles
 from app.models.live_exam import LiveExam
+from app.services.ai_gateway import ai_gateway, AIGenerationError
+from dotenv import load_dotenv, find_dotenv
 
-router = APIRouter(tags=["Question Papers & Generator"])
+router = APIRouter()
+
+logger = logging.getLogger(__name__)
+load_dotenv(find_dotenv(), override=True)
 
 raw_api_key = (
     getattr(settings, "GEMINI_API_KEY", None) or 
@@ -208,108 +213,59 @@ def generate_question_paper_endpoint(
     db: Session = Depends(get_db),
     tenant_id: str = Depends(get_current_tenant_id)
 ):
-    subject_raw = (payload.subject or "").lower()
-    topic_clean = (payload.topic or payload.topic_title or "General Core Concepts").strip()
-    q_count = max(payload.question_count or 5, 2)
+    """
+    Production-Hardened AI Question Paper Generator.
+    Guarantees:
+      1. Zero Domain Contamination (e.g. No Physics in Organic Chemistry).
+      2. ZERO Fake Preset Fallbacks.
+      3. Strict Deterministic Schema Enforcement.
+    """
+    q_count = max(min(payload.question_count or 5, 25), 2)
     duration = payload.duration_minutes or 15
 
-    # Determine Domain Strictly
-    target_domain = "general"
-    if "chem" in subject_raw or "রসায়ন" in subject_raw or "organic" in topic_clean.lower():
-        target_domain = "chemistry"
-    elif "phys" in subject_raw or "পদার্থ" in subject_raw:
-        target_domain = "physics"
-    elif "math" in subject_raw or "গণিত" in subject_raw:
-        target_domain = "math"
-    elif "bio" in subject_raw or "জীব" in subject_raw:
-        target_domain = "biology"
+    try:
+        # Route through AI Gateway with Strict Domain Verification
+        questions = ai_gateway.generate_exam_mcqs(
+            subject=payload.subject,
+            topic=payload.topic,
+            question_count=q_count,
+            difficulty=payload.difficulty,
+            program_name=payload.class_name
+        )
+    except AIGenerationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"{exc.message} Please create questions manually or choose from verified institutional Question Bank."
+        )
 
-    system_instruction = (
-        f"You are a Strict Senior Faculty of {payload.subject} for Udvash, Retina, and Focus admission academies in Bangladesh. "
-        f"CRITICAL RULE 1: You must generate questions STRICTLY and ONLY from the subject: '{payload.subject}' and topic: '{topic_clean}'. "
-        f"CRITICAL RULE 2: Under NO circumstance should you output Physics concepts in a Chemistry paper, or Chemistry concepts in a Math paper. "
-        f"CRITICAL RULE 3: Do not repeat common questions. Provide authentic admission standard questions with 4 distinct options and clean scientific explanation. "
-        "Output ONLY a valid JSON array matching this exact schema: "
-        "["
-        "  {"
-        "    \"id\": \"q_0\","
-        "    \"question\": \"Question text strictly based on topic in Bangla or English\","
-        "    \"options\": [\"Option A\", \"Option B\", \"Option C\", \"Option D\"],"
-        "    \"correct_option\": \"Option A\","
-        "    \"explanation\": \"Detailed step-by-step scientific justification\""
-        "  }"
-        "]"
-    )
-
-    prompt = (
-        f"Generate {q_count} unique, authentic MCQ questions.\n"
-        f"Target Subject: {payload.subject}\n"
-        f"Topic: {topic_clean}\n"
-        f"Standard: {payload.difficulty}\n"
-        f"Format: Strict JSON only without markdown codeblocks."
-    )
-
-    questions_data = []
-
-    # 1. Attempt AI Generation with Dynamic Seed
-    if ai_client and clean_api_key and len(clean_api_key) > 10:
-        try:
-            chat = ai_client.chats.create(
-                model='gemini-2.5-flash',
-                config=types.GenerateContentConfig(
-                    system_instruction=system_instruction,
-                    temperature=0.35, # Prevents identical repetitions
-                    response_mime_type="application/json"
-                )
-            )
-            response = chat.send_message(prompt)
-            questions_data = extract_clean_json_array(response.text)
-        except Exception as e:
-            print(f"⚠️ Gemini Generator fallback active: {e}")
-            questions_data = []
-
-    # 2. Strict Subject-Domain Fail-Safe Fallback (No Physics in Chemistry!)
-    if not questions_data:
-        pool = SUBJECT_FALLBACK_POOLS.get(target_domain, SUBJECT_FALLBACK_POOLS["chemistry" if "chem" in target_domain else "physics"])
-        # Shuffle to prevent exact identical question repeats
-        selected = list(pool)
-        random.shuffle(selected)
-        questions_data = selected[:q_count]
-
-    # Re-index unique IDs
-    for idx, q in enumerate(questions_data):
-        q["id"] = f"q_{idx}"
-
+    # Persist authoritative examination record
     now = datetime.datetime.now(datetime.timezone.utc)
-    exam_title = f"{payload.subject}: {topic_clean} ({payload.difficulty or 'Admission Model Test'})"
+    exam_title = f"{payload.subject}: {payload.topic} ({payload.difficulty})"
 
     new_exam = LiveExam(
         tenant_id=str(tenant_id),
         title=exam_title,
-        total_marks=float(len(questions_data) * 1.0),
+        total_marks=float(len(questions) * 1.0),
         duration_minutes=duration,
         negative_marking_rate=payload.negative_marking_rate or 0.25,
         start_time=now,
         end_time=now + datetime.timedelta(days=14),
         is_published=True,
-        questions_payload=questions_data
+        questions_payload=questions
     )
     db.add(new_exam)
     db.commit()
     db.refresh(new_exam)
 
     return {
-        "message": "Question paper generated and live exam published successfully",
+        "message": "Question paper generated and validated successfully",
         "paper_id": str(new_exam.id),
         "id": str(new_exam.id),
         "title": new_exam.title,
         "total_marks": new_exam.total_marks,
         "duration_minutes": new_exam.duration_minutes,
-        "total_questions": len(questions_data),
-        "institution_name": "Kids Shine International School & Future Academic Care",
-        "campus_address": "Nazrul Avenue, Kandirpar, Cumilla-3500 • Phone: +8801971122084",
-        "created_at": new_exam.created_at.strftime("%d %b, %Y"),
-        "questions": questions_data
+        "total_questions": len(questions),
+        "questions": questions
     }
 
 

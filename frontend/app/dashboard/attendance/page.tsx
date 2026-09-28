@@ -1,233 +1,255 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState, useEffect } from "react";
 import { useLanguage } from "@/components/providers";
-import { CheckCircle2, XCircle, Calendar, Save, Loader2, AlertCircle, RefreshCw, WifiOff } from "lucide-react";
 import { 
-  saveToOfflineAttendanceQueue, 
-  flushOfflineAttendanceQueue, 
-  getOfflineAttendanceQueue 
-} from "@/lib/offlineQueue";
+  CalendarCheck, Users, Check, X, 
+  Wifi, WifiOff, Send, ShieldCheck, AlertCircle, Loader2, Calendar
+} from "lucide-react";
 
-interface StudentRecord {
+interface StudentItem {
   id: string;
   first_name: string;
   last_name: string;
+  roll_number: string;
   admission_number: string;
-  roll_number: string | null;
-  status: "Present" | "Absent";
 }
 
-export default function DailyAttendanceLedger() {
+const CLASS_OPTIONS = ["Play", "Nursery", "KG", "Class 1", "Class 2", "Class 3", "Class 4", "Class 5"];
+
+export default function MobileFirstAttendancePage() {
   const { language } = useLanguage();
-  const [selectedClass, setSelectedClass] = useState("Play");
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split("T")[0]);
-  const [students, setStudents] = useState<StudentRecord[]>([]);
+  const [selectedClass, setSelectedClass] = useState("Class 5");
+  const [selectedDate, setSelectedDate] = useState(() => {
+    const today = new Date();
+    return today.toISOString().split("T")[0];
+  });
+
+  const [students, setStudents] = useState<StudentItem[]>([]);
+  // 1-Click Fast Attendance: binary state "Present" | "Absent"
+  const [attendanceMap, setAttendanceMap] = useState<Record<string, "Present" | "Absent">>({});
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [feedback, setFeedback] = useState<string | null>(null);
-  const [pendingSyncCount, setPendingSyncCount] = useState(0);
   const [isOnline, setIsOnline] = useState(true);
+  const [offlinePending, setOfflinePending] = useState(false);
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
 
-  const classes = ["Play", "Nursery", "KG", "Class 1", "Class 2", "Class 3", "Class 4", "Class 5"];
-
-  // 🚀 ১. অনলাইন/অফলাইন মনিটরিং ও অটো-সিঙ্ক লিসেনার
+  // Monitor Network Connectivity
   useEffect(() => {
     setIsOnline(navigator.onLine);
-    setPendingSyncCount(getOfflineAttendanceQueue().length);
-
-    const handleOnline = async () => {
-      setIsOnline(true);
-      const token = localStorage.getItem("token");
-      if (token) {
-        const synced = await flushOfflineAttendanceQueue(token);
-        if (synced > 0) {
-          setFeedback(language === "EN" ? `Synced ${synced} offline records successfully.` : `${synced}টি অফলাইন রেকর্ড সফলভাবে সিঙ্ক হয়েছে।`);
-          setPendingSyncCount(getOfflineAttendanceQueue().length);
-          localStorage.removeItem("schoolos_cache_/api/v1/dashboard/metrics");
-        }
-      }
-    };
-
+    const handleOnline = () => { setIsOnline(true); autoSyncOfflineQueue(); };
     const handleOffline = () => setIsOnline(false);
 
     window.addEventListener("online", handleOnline);
     window.addEventListener("offline", handleOffline);
+    checkOfflineQueue();
+
     return () => {
       window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
     };
-  }, [language]);
+  }, []);
 
-  const fetchSheet = async () => {
+  // Fetch Students for Class (Default: 1-Tap All Present)
+  const fetchStudents = async () => {
     setLoading(true);
-    setFeedback(null);
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch(
-        `http://127.0.0.1:8000/api/v1/attendance/sheet?class_name=${encodeURIComponent(selectedClass)}&attendance_date=${selectedDate}`,
-        {
-          headers: { Authorization: `Bearer ${token}` }
-        }
-      );
+      const res = await fetch(`http://127.0.0.1:8000/api/v1/students?class_name=${encodeURIComponent(selectedClass)}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
       if (res.ok) {
-        const data = await res.json();
+        const data: StudentItem[] = await res.json();
         setStudents(data);
+        // 🚀 Fast Default: All loaded students start as "Present"
+        const initialMap: Record<string, "Present" | "Absent"> = {};
+        data.forEach((s) => { initialMap[s.id] = "Present"; });
+        setAttendanceMap(initialMap);
       }
-    } catch (err) {
-      console.error(err);
-      setFeedback(language === "EN" ? "Offline: Showing locally cached ledger." : "অফলাইন: লোকাল ক্যাশ প্রদর্শিত হচ্ছে।");
+    } catch {
+      // Offline fallback: load cached class roster
+      const cached = localStorage.getItem(`roster_${selectedClass}`);
+      if (cached) {
+        const data: StudentItem[] = JSON.parse(cached);
+        setStudents(data);
+        const initialMap: Record<string, "Present" | "Absent"> = {};
+        data.forEach((s) => { initialMap[s.id] = "Present"; });
+        setAttendanceMap(initialMap);
+      }
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchSheet();
-  }, [selectedClass, selectedDate]);
+    fetchStudents();
+  }, [selectedClass]);
 
-  const toggleStatus = (id: string) => {
-    setStudents((prev) =>
-      prev.map((s) =>
-        s.id === id ? { ...s, status: s.status === "Present" ? "Absent" : "Present" } : s
-      )
-    );
+  // 🚀 1-Click Fast Toggle: Present <-> Absent only
+  const toggleStudentStatus = (studentId: string) => {
+    setAttendanceMap((prev) => {
+      const current = prev[studentId] || "Present";
+      return {
+        ...prev,
+        [studentId]: current === "Present" ? "Absent" : "Present"
+      };
+    });
   };
 
-  // 🚀 ২. Idempotent Offline-Safe Submit Handler
+  const markAll = (status: "Present" | "Absent") => {
+    const nextMap: Record<string, "Present" | "Absent"> = {};
+    students.forEach((s) => { nextMap[s.id] = status; });
+    setAttendanceMap(nextMap);
+  };
+
+  const checkOfflineQueue = () => {
+    const queue = localStorage.getItem("offline_attendance_queue");
+    setOfflinePending(!!queue && JSON.parse(queue).length > 0);
+  };
+
   const handleSaveAttendance = async () => {
     setSubmitting(true);
-    setFeedback(null);
-
-    // Create records with unique client-side idempotency key
-    const recordsWithIdempotency = students.map((s) => ({
-      student_id: s.id,
-      status: s.status,
-      remarks: "",
-      idempotency_key: `${selectedClass}_${selectedDate}_${s.id}`
+    const records = Object.entries(attendanceMap).map(([student_id, status]) => ({
+      student_id,
+      status
     }));
 
     const payload = {
-      attendance_date: selectedDate,
       class_name: selectedClass,
-      records: recordsWithIdempotency
+      date: selectedDate,
+      sync_idempotency_key: `IDEMP-ATT-${selectedClass}-${selectedDate}-${Date.now()}`,
+      records
     };
 
-    // যদি ডিভাইস অফলাইনে থাকে
     if (!navigator.onLine) {
-      saveToOfflineAttendanceQueue({
-        queueId: `${selectedClass}_${selectedDate}`,
-        className: selectedClass,
-        attendanceDate: selectedDate,
-        records: recordsWithIdempotency,
-        queuedAt: new Date().toISOString()
-      });
-      setPendingSyncCount(getOfflineAttendanceQueue().length);
-      setFeedback(language === "EN" ? "Saved to offline queue. Will auto-sync when online." : "অফলাইন কিউতে সংরক্ষিত হয়েছে। নেট পেলে স্বয়ংক্রিয়ভাবে সিঙ্ক হবে।");
+      const queue = JSON.parse(localStorage.getItem("offline_attendance_queue") || "[]");
+      queue.push(payload);
+      localStorage.setItem("offline_attendance_queue", JSON.stringify(queue));
+      setOfflinePending(true);
+      setSyncMessage(language === "EN" ? "Saved offline. Auto-sync will run when connection restores." : "অফলাইনে সংরক্ষিত হয়েছে। ইন্টারনেট সংযোগ পেলে স্বয়ংক্রিয় সিঙ্ক হবে।");
       setSubmitting(false);
       return;
     }
 
-    // অনলাইনে সরাসরি সাবমিশন
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch("http://127.0.0.1:8000/api/v1/attendance/bulk-submit", {
+      const res = await fetch("http://127.0.0.1:8000/api/v1/attendance/sync-offline", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`
-        },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify(payload)
       });
 
       if (res.ok) {
-        setFeedback(language === "EN" ? "Attendance saved successfully." : "হাজিরা সফলভাবে সংরক্ষিত হয়েছে।");
-        // ড্যাশবোর্ড যেন সাথে সাথে ফ্রেশ ডেটা ফেচ করে:
-        localStorage.removeItem("schoolos_cache_/api/v1/dashboard/metrics");
-        localStorage.removeItem("schoolos_cache_/api/v1/dashboard/operational-kpi");
+        setSyncMessage(language === "EN" ? "Attendance recorded & synced successfully!" : "হাজিরা সফলভাবে ডেটাবেসে সংরক্ষিত হয়েছে!");
+        setTimeout(() => setSyncMessage(null), 3500);
       } else {
-        throw new Error("Submission rejected");
+        alert("Failed to submit attendance. Please try again.");
       }
-    } catch (err) {
-      // নেটওয়ার্ক গ্লিচ ফলব্যাক: লোকাল কিউতে সেভ
-      saveToOfflineAttendanceQueue({
-        queueId: `${selectedClass}_${selectedDate}`,
-        className: selectedClass,
-        attendanceDate: selectedDate,
-        records: recordsWithIdempotency,
-        queuedAt: new Date().toISOString()
-      });
-      setPendingSyncCount(getOfflineAttendanceQueue().length);
-      setFeedback(language === "EN" ? "Server unreachable. Saved to offline queue." : "সার্ভারে সংযোগ না পাওয়ায় অফলাইন কিউতে সেভ করা হলো।");
+    } catch {
+      const queue = JSON.parse(localStorage.getItem("offline_attendance_queue") || "[]");
+      queue.push(payload);
+      localStorage.setItem("offline_attendance_queue", JSON.stringify(queue));
+      setOfflinePending(true);
     } finally {
       setSubmitting(false);
     }
   };
 
-  const presentCount = students.filter((s) => s.status === "Present").length;
-  const absentCount = students.length - presentCount;
+  const autoSyncOfflineQueue = async () => {
+    const queue = JSON.parse(localStorage.getItem("offline_attendance_queue") || "[]");
+    if (queue.length === 0) return;
 
+    const token = localStorage.getItem("token");
+    for (const item of queue) {
+      try {
+        await fetch("http://127.0.0.1:8000/api/v1/attendance/sync-offline", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify(item)
+        });
+      } catch {
+        return;
+      }
+    }
+
+    localStorage.removeItem("offline_attendance_queue");
+    setOfflinePending(false);
+    setSyncMessage(language === "EN" ? "All queued offline attendance records synced!" : "সব অফলাইন রেকর্ড সার্ভারে সফলভাবে সিঙ্ক হয়েছে!");
+  };
+
+  const totalInClass = students.length;
+  const presentCount = Object.values(attendanceMap).filter((v) => v === "Present").length;
+  const absentCount = Object.values(attendanceMap).filter((v) => v === "Absent").length;
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-300">
-      {/* Offline Alert Bar */}
+    <div className="space-y-6 max-w-6xl mx-auto pb-16 animate-in fade-in duration-300">
+      
+      {/* Offline Status Alert Banner */}
       {!isOnline && (
-        <div className="bg-amber-500/10 border border-amber-500/20 px-4 py-2.5 rounded-2xl flex items-center justify-between text-xs text-amber-600 dark:text-amber-400 font-medium">
+        <div className="p-3 bg-amber-500/10 border border-amber-500/20 text-amber-500 rounded-2xl text-xs flex items-center justify-between">
           <div className="flex items-center gap-2">
             <WifiOff size={15} />
             <span>অফলাইন মোড সক্রিয়: আপনি ইন্টারনেট ছাড়াই নিরাপদে হাজিরা নিতে পারছেন</span>
           </div>
-          {pendingSyncCount > 0 && (
-            <span className="bg-amber-500/20 px-2 py-0.5 rounded text-[10px] font-bold">
-              {pendingSyncCount}টি ব্যাচ সিঙ্কের অপেক্ষায়
-            </span>
-          )}
+          <span className="text-[10px] font-mono uppercase bg-amber-500/20 px-2 py-0.5 rounded">Local Storage</span>
         </div>
       )}
 
-      {/* Header & Filter Controls */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-gray-200 dark:border-white/[0.08] pb-6">
+      {/* Sync Success Feedback */}
+      {syncMessage && (
+        <div className="p-3 bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/20 text-emerald-800 dark:text-emerald-300 rounded-2xl text-xs flex items-center gap-2 animate-in slide-in-from-top-2">
+          <ShieldCheck size={16} />
+          <span>{syncMessage}</span>
+        </div>
+      )}
+
+      {/* Top Header: Title & Action Controls */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-gray-200 dark:border-white/10 pb-4">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-gray-900 dark:text-white">
-            {language === "EN" ? "Daily Attendance Ledger" : "দৈনন্দিন ডিজিটাল হাজিরা খাতা"}
+          <h1 className="text-2xl font-bold tracking-tight text-gray-900 dark:text-white flex items-center gap-2">
+            <span>Daily Attendance Ledger</span>
           </h1>
-          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-            {language === "EN" ? "Class attendance submission & automatic absence tracking" : "শ্রেণিভিত্তিক হাজিরা গ্রহণ এবং তাৎক্ষণিক অনুপস্থিতি ট্র্যাকিং"}
+          <p className="text-xs text-gray-500 mt-0.5">
+            Class attendance submission & automatic absence tracking
           </p>
         </div>
 
+        {/* Top Right Controls: Date Picker + Submit Attendance Button */}
         <div className="flex items-center gap-3 w-full sm:w-auto">
-          <div className="flex items-center gap-2 bg-white dark:bg-[#0f0f11] border border-gray-200 dark:border-white/10 rounded-xl px-3 py-2 text-sm shadow-sm">
-            <Calendar size={16} className="text-gray-400" />
+          {/* Date Picker Input */}
+          <div className="relative flex items-center bg-white dark:bg-[#0f0f11] border border-gray-200 dark:border-white/10 rounded-2xl px-3 py-2 text-xs font-mono">
+            <Calendar size={14} className="text-gray-400 mr-2" />
             <input
               type="date"
               value={selectedDate}
               onChange={(e) => setSelectedDate(e.target.value)}
-              className="bg-transparent text-gray-900 dark:text-white outline-none font-medium"
+              className="bg-transparent outline-none text-gray-800 dark:text-gray-200 font-semibold cursor-pointer"
             />
           </div>
 
+          {/* Submit Attendance Button */}
           <button
             onClick={handleSaveAttendance}
-            disabled={submitting || students.length === 0}
-            className="flex-1 sm:flex-none bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl text-sm font-semibold transition-all flex items-center justify-center gap-2 shadow-sm disabled:opacity-50"
+            disabled={submitting || loading || students.length === 0}
+            className="flex-1 sm:flex-initial px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-2xl font-bold text-xs shadow-sm flex items-center justify-center gap-2 transition-all disabled:opacity-50 active:scale-95"
           >
-            {submitting ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
-            {language === "EN" ? "Submit Attendance" : "হাজিরা সংরক্ষণ"}
+            {submitting ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
+            <span>Submit Attendance</span>
           </button>
         </div>
       </div>
 
-      {/* Class Selector Tabs */}
-      <div className="flex gap-2 overflow-x-auto pb-2 custom-scrollbar">
-        {classes.map((cls) => (
+      {/* Class Selection Pills */}
+      <div className="flex items-center gap-2 overflow-x-auto pb-1 custom-scrollbar">
+        {CLASS_OPTIONS.map((cls) => (
           <button
             key={cls}
+            type="button"
             onClick={() => setSelectedClass(cls)}
-            className={`px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap transition-all border ${
+            className={`px-4 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
               selectedClass === cls
-                ? "bg-blue-600 text-white border-blue-600 shadow-sm"
-                : "bg-white dark:bg-[#0f0f11] text-gray-600 dark:text-gray-400 border-gray-200 dark:border-white/10 hover:border-gray-400"
+                ? "bg-blue-600 text-white shadow-sm font-bold"
+                : "bg-white dark:bg-[#0f0f11] border border-gray-200 dark:border-white/5 text-gray-600 dark:text-neutral-400 hover:bg-gray-100 dark:hover:bg-white/[0.04]"
             }`}
           >
             {cls}
@@ -235,80 +257,109 @@ export default function DailyAttendanceLedger() {
         ))}
       </div>
 
-      {/* Operational Feedback */}
-      {feedback && (
-        <div className="p-4 bg-green-50 dark:bg-green-500/10 border border-green-200 dark:border-green-500/20 rounded-xl text-green-700 dark:text-green-400 text-sm font-medium flex items-center gap-2">
-          <CheckCircle2 size={16} /> {feedback}
+      {/* Metric Counter Cards */}
+      <div className="grid grid-cols-3 gap-3 sm:gap-4">
+        <div className="p-4 bg-white dark:bg-[#0f0f11] border border-gray-200 dark:border-white/5 rounded-2xl shadow-sm">
+          <div className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Total In Class</div>
+          <div className="text-2xl font-black text-gray-900 dark:text-white mt-1">{totalInClass}</div>
         </div>
-      )}
 
-      {/* Class Tally Bar */}
-      <div className="flex gap-4">
-        <div className="flex-1 p-4 bg-white dark:bg-[#0f0f11] border border-gray-200 dark:border-white/[0.08] rounded-2xl flex items-center justify-between">
-          <span className="text-xs font-bold uppercase text-gray-500">{language === "EN" ? "Total in Class" : "মোট শিক্ষার্থী"}</span>
-          <span className="text-xl font-bold text-gray-900 dark:text-white">{students.length}</span>
+        <div className="p-4 bg-white dark:bg-[#0f0f11] border border-gray-200 dark:border-white/5 rounded-2xl shadow-sm">
+          <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">Present</div>
+          <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400 mt-1">{presentCount}</div>
         </div>
-        <div className="flex-1 p-4 bg-green-50 dark:bg-green-500/5 border border-green-200 dark:border-green-500/20 rounded-2xl flex items-center justify-between">
-          <span className="text-xs font-bold uppercase text-green-700 dark:text-green-400">{language === "EN" ? "Present" : "উপস্থিত"}</span>
-          <span className="text-xl font-bold text-green-700 dark:text-green-400">{presentCount}</span>
-        </div>
-        <div className="flex-1 p-4 bg-red-50 dark:bg-red-500/5 border border-red-200 dark:border-red-500/20 rounded-2xl flex items-center justify-between">
-          <span className="text-xs font-bold uppercase text-red-700 dark:text-red-400">{language === "EN" ? "Absent" : "অনুপস্থিত"}</span>
-          <span className="text-xl font-bold text-red-700 dark:text-red-400">{absentCount}</span>
+
+        <div className="p-4 bg-white dark:bg-[#0f0f11] border border-gray-200 dark:border-white/5 rounded-2xl shadow-sm">
+          <div className="text-[10px] font-bold uppercase tracking-wider text-red-500">Absent</div>
+          <div className="text-2xl font-black text-red-500 mt-1">{absentCount}</div>
         </div>
       </div>
 
-      {/* Student Attendance Ledger List */}
-      <div className="bg-white dark:bg-[#0f0f11] border border-gray-200 dark:border-white/[0.08] rounded-2xl overflow-hidden shadow-sm">
+      {/* Quick Mark Toolbar (1-Tap Helpers) */}
+      <div className="flex items-center justify-between text-xs px-1">
+        <span className="text-gray-500">
+          Tip: If a student is absent, simply click once on their card.
+        </span>
+
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => markAll("Present")}
+            className="px-3 py-1 bg-gray-100 dark:bg-white/5 hover:bg-gray-200 dark:hover:bg-white/10 text-gray-700 dark:text-gray-300 rounded-lg font-semibold text-[11px] transition-all"
+          >
+            Mark All Present
+          </button>
+          <button
+            type="button"
+            onClick={() => markAll("Absent")}
+            className="px-3 py-1 bg-red-50 text-red-600 dark:bg-red-500/10 dark:text-red-400 hover:bg-red-100 rounded-lg font-semibold text-[11px] transition-all"
+          >
+            Clear All
+          </button>
+        </div>
+      </div>
+
+      {/* Student List (1-Click Fast Tap: Absent Highlighted in Striking Red) */}
+      <div className="space-y-2.5">
         {loading ? (
-          <div className="p-12 text-center text-gray-500 flex justify-center items-center gap-2">
-            <Loader2 className="animate-spin text-blue-600" size={20} /> Loading class sheet...
+          <div className="p-12 text-center text-xs text-gray-400 flex items-center justify-center gap-2">
+            <Loader2 className="animate-spin text-blue-600" size={18} />
+            <span>শিক্ষার্থী তালিকা লোড হচ্ছে...</span>
           </div>
         ) : students.length === 0 ? (
-          <div className="p-12 text-center text-gray-500 dark:text-gray-400 flex flex-col items-center gap-2">
-            <AlertCircle size={28} className="opacity-40" />
-            <p className="font-medium">{language === "EN" ? `No active students enrolled in ${selectedClass}.` : `${selectedClass}-এ কোনো শিক্ষার্থী নথিভুক্ত নেই।`}</p>
+          <div className="p-10 text-center bg-white dark:bg-[#0f0f11] border border-gray-200 dark:border-white/10 rounded-2xl text-xs text-gray-400">
+            {selectedClass}-এ কোনো নিবন্ধিত শিক্ষার্থী পাওয়া যায়নি।
           </div>
         ) : (
-          <div className="divide-y divide-gray-100 dark:divide-white/[0.05]">
-            {students.map((student) => {
-              const isPresent = student.status === "Present";
-              return (
-                <div
-                  key={student.id}
-                  onClick={() => toggleStatus(student.id)}
-                  className="p-4 sm:p-5 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-white/[0.02] cursor-pointer transition-colors"
-                >
-                  <div className="flex items-center gap-4">
-                    <div className="w-9 h-9 rounded-full bg-gray-100 dark:bg-white/5 flex items-center justify-center font-bold text-sm text-gray-700 dark:text-gray-300">
-                      {student.roll_number || student.admission_number.slice(-2)}
-                    </div>
-                    <div>
-                      <h4 className="text-sm font-semibold text-gray-900 dark:text-white">
-                        {student.first_name} {student.last_name}
-                      </h4>
-                      <p className="text-xs text-gray-500 dark:text-gray-400">
-                        Roll: {student.roll_number || "N/A"} • ID: {student.admission_number}
-                      </p>
-                    </div>
-                  </div>
+          students.map((st) => {
+            const isAbsent = attendanceMap[st.id] === "Absent";
 
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all border ${
-                        isPresent
-                          ? "bg-green-600 text-white border-green-600 shadow-sm"
-                          : "bg-red-600 text-white border-red-600 shadow-sm"
-                      }`}
-                    >
-                      {isPresent ? <CheckCircle2 size={16} /> : <XCircle size={16} />}
-                      {isPresent ? (language === "EN" ? "Present" : "উপস্থিত") : (language === "EN" ? "Absent" : "অনুপস্থিত")}
+            return (
+              <div
+                key={st.id}
+                onClick={() => toggleStudentStatus(st.id)}
+                className={`p-4 rounded-2xl border transition-all cursor-pointer flex items-center justify-between select-none ${
+                  isAbsent
+                    ? "bg-red-500/10 border-red-500/60 dark:border-red-500/50 shadow-sm"
+                    : "bg-white dark:bg-[#0f0f11] border-gray-200 dark:border-white/5 hover:border-gray-300 dark:hover:border-white/10"
+                }`}
+              >
+                {/* Roll & Student Details */}
+                <div className="flex items-center gap-3">
+                  <span className={`w-8 h-8 rounded-xl flex items-center justify-center font-mono font-bold text-xs transition-colors ${
+                    isAbsent
+                      ? "bg-red-500 text-white"
+                      : "bg-gray-100 dark:bg-white/5 text-gray-700 dark:text-gray-300"
+                  }`}>
+                    {st.roll_number || "—"}
+                  </span>
+                  <div>
+                    <h4 className={`font-bold text-xs sm:text-sm ${
+                      isAbsent ? "text-red-600 dark:text-red-400 font-extrabold" : "text-gray-900 dark:text-white"
+                    }`}>
+                      {st.first_name} {st.last_name}
+                    </h4>
+                    <span className="text-[10px] text-gray-400 font-mono">
+                      Roll: {st.roll_number || "00"} • ID: {st.admission_number}
                     </span>
                   </div>
                 </div>
-              );
-            })}
-          </div>
+
+                {/* 🚀 Status Badge: Striking Red for Absent, Clean Green for Present */}
+                <div>
+                  {isAbsent ? (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold uppercase tracking-wider bg-red-600 text-white shadow-sm shadow-red-500/20">
+                      <X size={13} /> Absent
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold uppercase tracking-wider bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
+                      <Check size={13} /> Present
+                    </span>
+                  )}
+                </div>
+              </div>
+            );
+          })
         )}
       </div>
 

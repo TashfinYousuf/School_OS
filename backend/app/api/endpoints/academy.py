@@ -186,16 +186,46 @@ def evaluate_exam_submission(
     payload: ExamSubmitPayload,
     db: Session = Depends(get_db),
     tenant_id: str = Depends(get_current_tenant_id),
-    _=Depends(require_roles(["admin", "student"]))
+    _=Depends(require_roles(["admin", "teacher", "student"]))
 ):
+    """
+    Authoritative Exam Submission Engine:
+      1. Concurrency Check: Prevents duplicate submissions per student.
+      2. Authoritative Time Check: Validates against server window (not browser clock).
+      3. Negative Marking Calculation: (+1.0 for correct, -0.25 for incorrect).
+    """
+    now = datetime.datetime.now(datetime.timezone.utc)
+
+    # 1. Fetch Exam
     exam = db.query(LiveExam).filter(
         LiveExam.id == payload.exam_id,
         LiveExam.tenant_id == str(tenant_id)
     ).first()
     if not exam:
-        raise HTTPException(status_code=404, detail="Live Exam not found.")
+        raise HTTPException(status_code=404, detail="Live Exam record not found.")
 
-    # 🚀 1. Robust JSON Deserialization
+    # 2. Concurrency Lock: Check if student already submitted this exam
+    existing_submission = db.query(ExamSubmission).filter(
+        ExamSubmission.exam_id == payload.exam_id,
+        ExamSubmission.student_id == payload.student_id,
+        ExamSubmission.tenant_id == str(tenant_id)
+    ).first()
+    if existing_submission:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Duplicate submission blocked. You have already completed and submitted this examination."
+        )
+
+    # 3. Server-Authoritative Expiry Check (Allow 120-second network latency grace period)
+    if exam.end_time:
+        max_allowed_time = exam.end_time + datetime.timedelta(seconds=120)
+        if now > max_allowed_time:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Exam submission rejected: Official server testing window has expired."
+            )
+
+    # 4. Parse Questions Safely
     questions = exam.questions_payload or []
     if isinstance(questions, str):
         try:
@@ -208,12 +238,12 @@ def evaluate_exam_submission(
     unattempted_count = 0
     questions_review = []
 
-    # 🚀 2. Universal Answer Matching (Resolves all-zero bug)
+    # 5. Deterministic Answer Grading
     for idx, q in enumerate(questions):
         q_id = q.get("id") or f"q_{idx}"
         correct_choice = str(q.get("correct_option", "")).strip()
 
-        # Check all possible key formats sent by frontend
+        # Match against all client payload key variations (e.g., 'q_0', '0')
         student_choice = (
             payload.answers.get(q_id) or 
             payload.answers.get(f"q_{idx}") or 
@@ -225,17 +255,15 @@ def evaluate_exam_submission(
             is_corr = False
             is_unatt = True
         else:
-            student_clean = str(student_choice).strip().lower()
-            correct_clean = correct_choice.lower()
-
-            if student_clean == correct_clean or student_clean in correct_clean:
+            is_unatt = False
+            s_clean = str(student_choice).strip().lower()
+            c_clean = correct_choice.lower()
+            if s_clean == c_clean or s_clean in c_clean:
                 correct_count += 1
                 is_corr = True
-                is_unatt = False
             else:
                 wrong_count += 1
                 is_corr = False
-                is_unatt = False
 
         questions_review.append({
             "id": q_id,
@@ -245,10 +273,10 @@ def evaluate_exam_submission(
             "student_answer": student_choice if not is_unatt else None,
             "is_correct": is_corr,
             "is_unattempted": is_unatt,
-            "explanation": q.get("explanation", "সঠিক উত্তরটি পাঠ্যবই ও বোর্ড স্ট্যান্ডার্ড অনুযায়ী মূল্যায়িত।")
+            "explanation": q.get("explanation", "Solution strictly evaluated against academic curriculum standards.")
         })
 
-    # 🚀 3. Negative Marking Calculation (-0.25 per wrong answer)
+    # 6. Negative Marking Logic
     total_q = len(questions) or int(exam.total_marks) or 1
     neg_rate = float(exam.negative_marking_rate or 0.25)
     penalty = round(wrong_count * neg_rate, 2)
@@ -256,7 +284,7 @@ def evaluate_exam_submission(
     final_score = round(max(raw_score, 0.0), 2)
     accuracy = round((correct_count / total_q) * 100, 1)
 
-    # Persist in exam_submissions
+    # 7. Atomic Persistence
     submission = ExamSubmission(
         tenant_id=str(tenant_id),
         exam_id=exam.id,
@@ -281,6 +309,47 @@ def evaluate_exam_submission(
         "accuracy": f"{accuracy}%",
         "reviews": questions_review
     }
+
+# 2. Delete Live Exam Endpoint
+@router.delete("/exams/{exam_id}", status_code=status.HTTP_200_OK)
+def delete_live_exam(
+    exam_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_current_tenant_id),
+    _=Depends(require_roles(["admin", "teacher"]))
+):
+    exam = db.query(LiveExam).filter(
+        LiveExam.id == exam_id,
+        LiveExam.tenant_id == str(tenant_id)
+    ).first()
+    if not exam:
+        raise HTTPException(status_code=404, detail="Live exam not found.")
+
+    # Delete related submissions first
+    db.query(ExamSubmission).filter(ExamSubmission.exam_id == exam.id).delete()
+    db.delete(exam)
+    db.commit()
+    return {"message": "Live exam and related submissions deleted successfully."}
+
+
+# 3. Archive / Unpublish Live Exam Endpoint
+@router.patch("/exams/{exam_id}/archive", status_code=status.HTTP_200_OK)
+def archive_live_exam(
+    exam_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_current_tenant_id),
+    _=Depends(require_roles(["admin", "teacher"]))
+):
+    exam = db.query(LiveExam).filter(
+        LiveExam.id == exam_id,
+        LiveExam.tenant_id == str(tenant_id)
+    ).first()
+    if not exam:
+        raise HTTPException(status_code=404, detail="Live exam not found.")
+
+    exam.is_published = not exam.is_published
+    db.commit()
+    return {"message": f"Exam status updated to {'published' if exam.is_published else 'archived'}."}
 
 
 # --- 1. AI Question Bank & Live Exam Generator ---

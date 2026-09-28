@@ -1,7 +1,7 @@
 import jwt
 
 from datetime import datetime, timedelta, timezone
-from typing import Any, Union, Optional
+from typing import Any, Union, Optional, Dict
 from passlib.context import CryptContext
 from app.core.config import settings
 
@@ -17,17 +17,30 @@ def get_password_hash(password: str) -> str:
         raise ValueError("Password too long (max 72 bytes)")
     return pwd_context.hash(password)
 
-# app/core/security.py
-import uuid
 
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
-    to_encode = data.copy()
-    # Defensive: normalize any UUID values before jwt.encode's raw json.dumps
-    to_encode = {
-        k: (str(v) if isinstance(v, uuid.UUID) else v)
-        for k, v in to_encode.items()
-    }
-    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES))
-    to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
+def create_access_token(
+    data: Optional[Dict[str, Any]] = None,
+    subject: Optional[Union[str, Any]] = None,
+    expires_delta: Optional[timedelta] = None,
+    **kwargs: Any
+) -> str:
+    """
+    Production-grade flexible JWT token generator.
+    Safely merges `data`, `subject`, and arbitrary payload kwargs.
+    """
+    to_encode: Dict[str, Any] = {}
+    if data:
+        to_encode.update(data)
+    if subject:
+        to_encode["sub"] = str(subject)
+    if kwargs:
+        to_encode.update(kwargs)
+
+    now = datetime.now(timezone.utc)
+    expire = now + (expires_delta if expires_delta else timedelta(days=7))
+    to_encode.update({"exp": expire, "iat": now})
+
+    secret = getattr(settings, "JWT_SECRET_KEY", None) or getattr(settings, "SECRET_KEY", "educationos_secret_key_2026")
+    algorithm = getattr(settings, "JWT_ALGORITHM", "HS256")
+
+    return jwt.encode(to_encode, secret, algorithm=algorithm)

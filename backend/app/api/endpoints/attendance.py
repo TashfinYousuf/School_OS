@@ -1,12 +1,15 @@
 # backend/app/api/endpoints/attendance.py
-from typing import List, Optional
+import uuid
+import datetime
+
+from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from datetime import date
-import uuid
+from pydantic import BaseModel, Field
 
 from app.core.database import get_db
-from app.api.deps import get_current_tenant_id, require_roles
+from app.api.deps import get_current_tenant_id, require_roles, get_current_user
 from app.models.attendance import AttendanceEvent
 from app.models.student import Student
 from app.schemas.attendance import (
@@ -17,6 +20,20 @@ from app.schemas.attendance import (
 
 # Keep APIRouter without duplicate prefix to match main.py routing
 router = APIRouter()
+
+
+class AttendanceItem(BaseModel):
+    student_id: str
+    status: str = Field(..., example="Present") # Present, Absent, Late
+    timestamp: Optional[str] = None
+    notes: Optional[str] = None
+
+class OfflineSyncPayload(BaseModel):
+    class_name: str
+    section: Optional[str] = "A"
+    date: str # YYYY-MM-DD
+    sync_idempotency_key: str
+    records: List[AttendanceItem]
 
 
 @router.get("/sheet", response_model=List[AttendanceSheetStudent])
@@ -128,3 +145,74 @@ def submit_bulk_attendance(
         updated_count=updated_count,
         skipped_duplicates=skipped_duplicates
     )
+
+
+@router.post("/sync-offline", status_code=status.HTTP_200_OK, dependencies=[Depends(require_roles(["admin", "teacher"]))])
+def sync_offline_attendance(
+    payload: OfflineSyncPayload,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_current_tenant_id),
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """
+    Idempotent Offline Attendance Sync Engine.
+    Resolves client-server sync conflicts:
+    1. If record already exists for (tenant_id, student_id, date), updates status atomically.
+    2. Otherwise, appends new event with audit trail.
+    """
+    try:
+        attendance_date = datetime.date.fromisoformat(payload.date)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Expected YYYY-MM-DD.")
+
+    synced_count = 0
+    updated_count = 0
+
+    for item in payload.records:
+        student = db.query(Student).filter(
+            Student.id == item.student_id,
+            Student.tenant_id == str(tenant_id)
+        ).first()
+
+        if not student:
+            continue
+
+        existing_record = db.query(AttendanceEvent).filter(
+            AttendanceEvent.tenant_id == str(tenant_id),
+            AttendanceEvent.student_id == student.id,
+            AttendanceEvent.date == attendance_date
+        ).first()
+
+        clean_status = item.status.capitalize()
+        if clean_status not in ["Present", "Absent", "Late"]:
+            clean_status = "Present"
+
+        if existing_record:
+            # Conflict Resolution: Server updates status with sync audit
+            if existing_record.status != clean_status:
+                existing_record.status = clean_status
+                existing_record.remarks = f"Offline Sync Update: {item.notes or ''}".strip()
+                updated_count += 1
+        else:
+            # Clean Insert
+            new_event = AttendanceEvent(
+                tenant_id=str(tenant_id),
+                student_id=student.id,
+                date=attendance_date,
+                status=clean_status,
+                remarks=item.notes,
+                marked_by_user_id=str(current_user["user_id"])
+            )
+            db.add(new_event)
+            synced_count += 1
+
+    db.commit()
+
+    return {
+        "status": "SYNCED",
+        "date": payload.date,
+        "class_name": payload.class_name,
+        "records_processed": len(payload.records),
+        "new_inserted": synced_count,
+        "updated_conflicts": updated_count
+    }

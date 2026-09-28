@@ -7,7 +7,8 @@ from sqlalchemy import func, or_
 from pydantic import BaseModel, Field, model_validator
 
 from app.core.database import get_db
-from app.api.deps import get_current_tenant_id, require_roles
+from app.core.security_guard import security_guard
+from app.api.deps import get_current_tenant_id, get_current_user, require_roles
 from app.models.finance import FeePayment
 from app.models.student import Student
 from app.models.tenant import SchoolProfile
@@ -321,3 +322,109 @@ def collect_student_fee(
         "message": "Fee collected successfully",
         "receipt": format_receipt_payload(new_payment, student, school)
     }
+
+
+@router.get("/receipts/{payment_id}")
+def get_payment_receipt_record(
+    payment_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_current_tenant_id),
+    _=Depends(require_roles(["admin", "teacher"]))
+):
+    payment = security_guard.get_or_404_tenant_resource(
+        db=db,
+        model_class=FeePayment,
+        resource_id=payment_id,
+        current_tenant_id=tenant_id,
+        resource_name="Fee Payment"
+    )
+
+    student = db.query(Student).filter(Student.id == payment.student_id).first()
+    school = db.query(SchoolProfile).filter(SchoolProfile.tenant_id == str(tenant_id)).first()
+
+    return format_receipt_payload(payment, student, school)
+
+
+class PaymentReversalPayload(BaseModel):
+    payment_id: uuid.UUID
+    reason: str = Field(..., min_length=5, example="Accidental double billing by cashier")
+
+@router.post("/reversal", status_code=status.HTTP_200_OK, dependencies=[Depends(require_roles(["admin"]))])
+def reverse_payment_transaction(
+    payload: PaymentReversalPayload,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_current_tenant_id),
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    """
+    Append-Only Ledger Reversal.
+    Never mutates or deletes original financial history.
+    Inserts a negative audit adjustment and flags original payment.
+    """
+    original_payment = db.query(FeePayment).filter(
+        FeePayment.id == payload.payment_id,
+        FeePayment.tenant_id == str(tenant_id)
+    ).first()
+
+    if not original_payment:
+        raise HTTPException(status_code=404, detail="Payment record not found.")
+
+    if original_payment.is_reversed:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Transaction already reversed on {original_payment.reversed_at}."
+        )
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    reversal_receipt_no = f"REV-{datetime.date.today().year}-{uuid.uuid4().hex[:6].upper()}"
+    reversal_idemp = f"IDEMP-REV-{uuid.uuid4().hex[:12]}"
+
+    # 1. Flag Original Payment as REVERSED
+    original_payment.is_reversed = True
+    original_payment.payment_status = "REVERSED"
+    original_payment.reversal_reason = payload.reason
+    original_payment.reversed_by_user_id = str(current_user["user_id"])
+    original_payment.reversed_at = now
+
+    # 2. Append Negative Ledger Balancing Entry (Append-Only Accounting)
+    reversal_entry = FeePayment(
+        tenant_id=str(tenant_id),
+        student_id=original_payment.student_id,
+        amount=-abs(float(original_payment.amount)),
+        amount_paid=-abs(float(original_payment.amount_paid)),
+        currency="BDT",
+        payment_method=original_payment.payment_method,
+        payment_status="ADJUSTED",
+        receipt_number=reversal_receipt_no,
+        receipt_no=reversal_receipt_no,
+        provider_transaction_id=f"REV-FOR-{original_payment.receipt_number}",
+        transaction_id=f"REV-FOR-{original_payment.receipt_number}",
+        idempotency_key=reversal_idemp,
+        notes=f"Reversal Adjustment: {payload.reason} (Ref: {original_payment.receipt_number})",
+        reversal_reference_id=original_payment.id,
+        metadata_payload={
+            "original_receipt": original_payment.receipt_number,
+            "reversal_reason": payload.reason,
+            "reversed_by": current_user["user_id"]
+        }
+    )
+
+    db.add(reversal_entry)
+    db.commit()
+
+    return {
+        "message": "Payment transaction reversed cleanly in append-only ledger.",
+        "original_receipt": original_payment.receipt_number,
+        "reversal_receipt": reversal_receipt_no,
+        "adjusted_amount": reversal_entry.amount,
+        "status": "REVERSED"
+    }
+
+
+# 🚀 Compliance Guard: Block Hard Deletes
+@router.delete("/{payment_id}")
+def block_payment_delete():
+    raise HTTPException(
+        status_code=status.HTTP_405_METHOD_NOT_ALLOWED,
+        detail="Financial Compliance Violation: Hard deletes are strictly prohibited on fee records. Use /reversal for accounting adjustments."
+    )

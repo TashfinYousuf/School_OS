@@ -1,5 +1,6 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import ConfigDict
+from typing import Optional
 
 class Settings(BaseSettings):
     """
@@ -12,13 +13,17 @@ class Settings(BaseSettings):
     
     # Database Configurations
     # Default is a local postgres database for development
-    DATABASE_URL: str = "postgresql://postgres:password@localhost:5432/schoolos_db"
+    DATABASE_URL: str
     
     # JWT Configs (Will be used in Step 2)
-    SECRET_KEY: str = "super-secret-key-change-this-in-production"
+    SECRET_KEY: str
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 8 # 8 Days
 
-    GEMINI_API_KEY: str 
+    # Core API Keys
+    GEMINI_API_KEY: Optional[str] = None
+    GOOGLE_API_KEY: Optional[str] = None
+    GROQ_API_KEY: Optional[str] = None
+    OPENROUTER_API_KEY: Optional[str] = None
 
     # Pydantic v2 এর সঠিক কনফিগারেশন:
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=True, extra="ignore")

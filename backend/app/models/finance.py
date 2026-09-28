@@ -1,47 +1,38 @@
-from datetime import datetime, timezone
-from enum import Enum
-from typing import Optional
+import enum
 from uuid import UUID, uuid4
-from sqlalchemy import (
-    Boolean,
-    DateTime,
-    Enum as SAEnum,
-    ForeignKey,
-    Index,
-    Numeric,
-    String,
-    Text,
-)
+from datetime import datetime, timezone
+from typing import Optional
+from sqlalchemy import String, Numeric, Boolean, Text, DateTime, Index
+from sqlalchemy import Enum as SAEnum
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import Mapped, mapped_column
-
+from sqlalchemy.orm import Mapped, mapped_column, synonym
 from app.models.base import Base
 
-class PaymentMethod(str, Enum):
+class PaymentMethod(str, enum.Enum):
     CASH = "CASH"
-    BANK_TRANSFER = "BANK_TRANSFER"
     BKASH = "BKASH"
     NAGAD = "NAGAD"
+    BANK = "BANK"
 
-class PaymentStatus(str, Enum):
+class PaymentStatus(str, enum.Enum):
     PENDING = "PENDING"
     COMPLETED = "COMPLETED"
-    FAILED = "FAILED"
     REVERSED = "REVERSED"
+    ADJUSTED = "ADJUSTED"
 
 class FeePayment(Base):
     __tablename__ = "fee_payments"
-    __table_args__ = {'extend_existing': True}
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4, index=True)
     tenant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
-    student_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True) # string/UUID safe
+    student_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     
     # Financial Precision
     amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
     currency: Mapped[str] = mapped_column(String(3), default="BDT", nullable=False)
+    amount_paid = synonym("amount")
     
-    # Clean Fiat Rail Abstraction
+    # Fiat Rail & Status
     payment_method: Mapped[PaymentMethod] = mapped_column(
         SAEnum(PaymentMethod, name="payment_method_enum", native_enum=True),
         nullable=False,
@@ -68,6 +59,14 @@ class FeePayment(Base):
     idempotency_key: Mapped[str] = mapped_column(String(128), unique=True, nullable=False, index=True)
     is_reconciled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     reconciled_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    
+    # Append-Only Ledger Reversal Invariants (Sprint 3)
+    is_reversed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    reversal_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    reversal_reference_id: Mapped[Optional[UUID]] = mapped_column(nullable=True)
+    reversed_by_user_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    reversed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
 

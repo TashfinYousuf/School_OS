@@ -7,8 +7,10 @@ import {
   Trophy, Clock, CheckCircle2, XCircle, AlertTriangle, 
   HelpCircle, Send, Loader2, Award, ArrowLeft, Sparkles,
   ChevronRight, ChevronLeft, Check, RotateCcw, Bookmark,
-  Camera, Share2, Plus, X, Users, BarChart3, MessageCircle
+  Camera, Share2, Plus, X, Users, BarChart3, MessageCircle,
+  Trash2, 
 } from "lucide-react";
+
 import Link from "next/link";
 
 interface ExamMeta {
@@ -155,6 +157,28 @@ export default function LiveExamsPage() {
       }
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Add handleDeleteExam function:
+  const handleDeleteExam = async (examId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!confirm(language === "EN" ? "Are you sure you want to delete this live exam?" : "আপনি কি নিশ্চিতভাবে এই লাইভ পরীক্ষাটি মুছে ফেলতে চান?")) return;
+
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`http://127.0.0.1:8000/api/v1/academy/exams/${examId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        fetchAvailableExams();
+        alert(language === "EN" ? "Exam deleted successfully." : "পরীক্ষা সফলভাবে মুছে ফেলা হয়েছে।");
+      } else {
+        alert(language === "EN" ? "Failed to delete exam." : "পরীক্ষা মুছতে ব্যর্থ হয়েছে।");
+      }
+    } catch {
+      alert("Network error deleting exam.");
     }
   };
 
@@ -369,6 +393,15 @@ export default function LiveExamsPage() {
                     >
                       <span>Start Test</span>
                       <ChevronRight size={14} />
+                    </button>
+
+                    {/* 🚀 NEW: Delete Live Exam Action Button */}
+                    <button
+                      onClick={(e) => handleDeleteExam(ex.id, e)}
+                      className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-500/10 rounded-xl transition-all"
+                      title="Delete Exam"
+                    >
+                      <Trash2 size={15} />
                     </button>
                   </div>
                 </div>

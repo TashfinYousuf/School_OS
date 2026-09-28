@@ -55,9 +55,10 @@ def generate_grounded_response(query: str, tenant_id: str, db: Session) -> str:
         AttendanceEvent.status == "Absent"
     ).count()
 
-    fees_today = db.query(func.sum(FeePayment.amount_paid)).filter(
+    amount_col = getattr(FeePayment, "amount", getattr(FeePayment, "amount_paid", None))
+    fees_today = db.query(func.coalesce(func.sum(amount_col), 0.0)).filter(
         FeePayment.tenant_id == str(tenant_id),
-        func.date(FeePayment.payment_date) == today
+        func.date(FeePayment.created_at) == today
     ).scalar() or 0.0
 
     total_revenue = db.query(func.sum(FeePayment.amount_paid)).filter(

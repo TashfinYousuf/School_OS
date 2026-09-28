@@ -2,11 +2,11 @@
 
 import { useState, useEffect } from "react";
 import { useLanguage } from "@/components/providers";
+import { useWorkspace } from "@/lib/workspaceContext";
 import { safeFetch } from "@/lib/apiClient";
 import { 
-  BookOpen, Plus, Sparkles, Clock, Printer, 
-  CheckCircle2, Loader2, Award, Eye, Trash2,
-  FileText, Check, ChevronDown, ChevronUp, ArrowLeft
+  BookOpen, Sparkles, Clock, Printer, 
+  CheckCircle2, Loader2, Trash2, Eye, School, GraduationCap
 } from "lucide-react";
 import Link from "next/link";
 
@@ -41,21 +41,53 @@ interface SavedPaperSummary {
 
 export default function QuestionBankStudioPage() {
   const { language } = useLanguage();
+  const { currentWorkspace } = useWorkspace();
+  const isAcademy = currentWorkspace?.type === "academy";
+
   const [savedPapers, setSavedPapers] = useState<SavedPaperSummary[]>([]);
   const [loadingList, setLoadingList] = useState(true);
   const [activeDraft, setActiveDraft] = useState<FullPaperDraft | null>(null);
-  const [loadingSingle, setLoadingSingle] = useState(false);
 
-  // Generator Form State
+  // Generator Form States (Separate Class, Subject, and Chapter)
   const [isGenerating, setIsGenerating] = useState(false);
-  const [subject, setSubject] = useState("Physics 1st Paper (পদার্থবিজ্ঞান ১ম পত্র)");
-  const [topic, setTopic] = useState("নিউটনিয়ান বলবিদ্যা ও কাজ শক্তি ক্ষমতা");
-  const [standard, setStandard] = useState("Engineering Admission (Udvash Style)");
+  const [generationError, setGenerationError] = useState<string | null>(null);
+
+  // 1. Class / Program Target
+  const [targetClass, setTargetClass] = useState(isAcademy ? "HSC Care '26" : "Class 5");
+
+  // 2. Exam Type / Assessment Standard
+  const [assessmentType, setAssessmentType] = useState(
+    isAcademy ? "Engineering Admission Standard (Udvash Style)" : "NCTB Annual Assessment (বার্ষিক মূল্যায়ন)"
+  );
+
+  // 3. Subject (Custom typeable + suggestions)
+  const [subject, setSubject] = useState(
+    isAcademy ? "Physics 1st Paper" : "Elementary Mathematics (প্রাথমিক গণিত)"
+  );
+
+  // 4. Chapter / Specific Topic
+  const [topic, setTopic] = useState("");
+
+  // 5. Questions & Duration
   const [questionCount, setQuestionCount] = useState("5");
   const [duration, setDuration] = useState("15");
 
-  // Preview Settings
   const [showAnswerKey, setShowAnswerKey] = useState(true);
+
+  // Dynamic Workspace State Reset
+  useEffect(() => {
+    if (isAcademy) {
+      setTargetClass("HSC Care '26");
+      setAssessmentType("Engineering Admission Standard (Udvash Style)");
+      setSubject("Physics 1st Paper");
+      setTopic("");
+    } else {
+      setTargetClass("Class 5");
+      setAssessmentType("NCTB Annual Assessment (বার্ষিক মূল্যায়ন)");
+      setSubject("Elementary Mathematics (প্রাথমিক গণিত)");
+      setTopic("");
+    }
+  }, [isAcademy]);
 
   const fetchSavedPapers = async () => {
     setLoadingList(true);
@@ -77,6 +109,9 @@ export default function QuestionBankStudioPage() {
   const handleGenerateDraft = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsGenerating(true);
+    setGenerationError(null);
+
+    const programContext = `${targetClass} • ${assessmentType}`;
 
     try {
       const token = localStorage.getItem("token");
@@ -87,9 +122,11 @@ export default function QuestionBankStudioPage() {
           Authorization: `Bearer ${token}`
         },
         body: JSON.stringify({
-          subject,
-          topic,
-          difficulty: standard,
+          subject: subject.trim(),
+          topic: topic.trim() || "General Syllabus Assessment",
+          difficulty: assessmentType,
+          class_name: targetClass,
+          program_name: programContext,
           question_count: parseInt(questionCount),
           duration_minutes: parseInt(duration)
         })
@@ -100,17 +137,17 @@ export default function QuestionBankStudioPage() {
         setActiveDraft(data);
         fetchSavedPapers();
       } else {
-        alert("Failed to generate draft. Please check backend connection.");
+        const errData = await res.json().catch(() => ({}));
+        setGenerationError(errData.detail || "Failed to generate paper draft.");
       }
-    } catch (err) {
-      alert("Error contacting Question Generator API.");
+    } catch {
+      setGenerationError("Network error contacting AI Generation Gateway.");
     } finally {
       setIsGenerating(false);
     }
   };
 
   const loadSavedPaperDraft = async (paperId: string) => {
-    setLoadingSingle(true);
     try {
       const token = localStorage.getItem("token");
       const res = await fetch(`http://127.0.0.1:8000/api/v1/question-papers/${paperId}`, {
@@ -121,14 +158,14 @@ export default function QuestionBankStudioPage() {
         setActiveDraft(data);
         window.scrollTo({ top: 0, behavior: "smooth" });
       }
-    } finally {
-      setLoadingSingle(false);
+    } catch {
+      alert("Failed to load saved paper.");
     }
   };
 
   const handleDeletePaper = async (paperId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!confirm("Are you sure you want to delete this question draft?")) return;
+    if (!confirm(language === "EN" ? "Delete this saved question draft?" : "এই সংরক্ষিত প্রশ্নপত্রটি মুছে ফেলতে চান?")) return;
 
     try {
       const token = localStorage.getItem("token");
@@ -141,93 +178,182 @@ export default function QuestionBankStudioPage() {
         fetchSavedPapers();
       }
     } catch {
-      alert("Failed to delete paper.");
+      alert("Failed to delete draft.");
     }
   };
 
   return (
     <div className="space-y-8 max-w-5xl mx-auto animate-in fade-in duration-300 print:max-w-full">
       
-      {/* Header (Screen View) */}
+      {/* Top Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-gray-200 dark:border-white/10 pb-5 print:hidden">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-gray-900 dark:text-white flex items-center gap-2">
             <BookOpen className="text-blue-600 dark:text-purple-400" size={26} />
-            <span>{language === "EN" ? "Question Bank & Exam Paper Studio" : "প্রশ্ন ব্যাংক ও প্রশ্নপত্র প্রণয়ন স্টুডিও"}</span>
+            <span>
+              {isAcademy ? "Academy Question Bank & Live Exam Studio" : "School Exam Paper & Question Studio"}
+            </span>
           </h1>
           <p className="text-xs text-gray-500 mt-1">
-            Udvash / Retina admission standard question generator and official A4 paper builder.
+            {isAcademy
+              ? "Udvash / Retina admission standard question generator and official A4 paper builder."
+              : "Kids Shine International School NCTB curriculum assessment and printable A4 question papers."}
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
-          <Link 
-            href="/dashboard/live-exams"
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold shadow-sm transition-all flex items-center gap-1.5"
-          >
-            <span>Go to Live Exam Portal</span>
-          </Link>
-        </div>
+        <Link 
+          href="/dashboard/live-exams"
+          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold shadow-sm transition-all"
+        >
+          Go to Live Exam Portal
+        </Link>
       </div>
 
-      {/* ========================================================================= */}
-      {/* 1. INTERACTIVE QUESTION DRAFT BUILDER (Screen View)                       */}
-      {/* ========================================================================= */}
+      {/* Generator Form Card */}
       <div className="bg-white dark:bg-[#0f0f11] border border-gray-200 dark:border-white/10 rounded-3xl p-6 shadow-sm space-y-4 print:hidden">
-        <div className="flex items-center gap-2 pb-2 border-b border-gray-100 dark:border-white/5">
-          <Sparkles className="text-purple-600 dark:text-purple-400" size={18} />
-          <h3 className="font-bold text-sm text-gray-900 dark:text-white">
-            {language === "EN" ? "Draft New Examination Paper" : "নতুন প্রশ্নপত্র প্রস্তুত করুন"}
-          </h3>
+        
+        {/* Workspace Mode Badge & Section Header */}
+        <div className="flex items-center justify-between pb-2 border-b border-gray-100 dark:border-white/5">
+          <div className="flex items-center gap-2">
+            <Sparkles className="text-purple-600 dark:text-purple-400" size={18} />
+            <h3 className="font-bold text-sm text-gray-900 dark:text-white">
+              {isAcademy ? "Draft Coaching / Admission Assessment Paper" : "স্কুল পরীক্ষার প্রশ্নপত্র প্রণয়ন (NCTB)"}
+            </h3>
+          </div>
+
+          <div className="flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-bold uppercase tracking-wider bg-purple-50 text-purple-700 dark:bg-purple-500/10 dark:text-purple-300 border border-purple-200 dark:border-purple-500/20">
+            {isAcademy ? <GraduationCap size={13} /> : <School size={13} />}
+            <span>{isAcademy ? "Academy Mode Active" : "School Mode Active"}</span>
+          </div>
         </div>
 
+        {generationError && (
+          <div className="p-3.5 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 text-red-700 dark:text-red-400 rounded-2xl text-xs">
+            {generationError}
+          </div>
+        )}
+
         <form onSubmit={handleGenerateDraft} className="space-y-4 text-xs">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          
+          {/* Row 1: Target Class & Assessment Standard */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
             <div>
-              <label className="font-semibold text-gray-700 dark:text-gray-300">Coaching / Board Standard</label>
-              <select
-                value={standard}
-                onChange={(e) => setStandard(e.target.value)}
+              <label className="font-semibold text-gray-700 dark:text-gray-300">
+                {isAcademy ? "প্রোগ্রাম বা ব্যাচ (Target Program / Batch) *" : "শ্রেণি স্তর (Grade / Class Level) *"}
+              </label>
+              <input
+                required
+                list="class-program-options"
+                value={targetClass}
+                onChange={(e) => setTargetClass(e.target.value)}
+                placeholder={isAcademy ? "e.g. HSC Care '26, Medical Batch Alpha" : "e.g. Class 5, Class 4, Nursery, Play"}
                 className="w-full mt-1.5 p-2.5 bg-gray-50 dark:bg-black/40 border border-gray-200 dark:border-white/10 rounded-xl outline-none font-semibold text-gray-900 dark:text-white"
-              >
-                <option value="Engineering Admission (Udvash Style)">Engineering Admission (Udvash Style)</option>
-                <option value="Medical Admission (Retina Style)">Medical Admission (Retina Style)</option>
-                <option value="Varsity 'KA' Admission (Focus Style)">Varsity 'KA' Admission (Focus Style)</option>
-                <option value="HSC Board Final Examination">HSC Board Final Examination</option>
-                <option value="School Terminal Assessment (NCTB)">School Terminal Assessment (NCTB)</option>
-              </select>
+              />
+              <datalist id="class-program-options">
+                {isAcademy ? (
+                  <>
+                    <option value="HSC Care '26" />
+                    <option value="Engineering Admission Batch" />
+                    <option value="Medical Admission Batch" />
+                    <option value="Varsity 'KA' Admission Batch" />
+                    <option value="SSC Board Foundation" />
+                  </>
+                ) : (
+                  <>
+                    <option value="Play" />
+                    <option value="Nursery" />
+                    <option value="KG" />
+                    <option value="Class 1" />
+                    <option value="Class 2" />
+                    <option value="Class 3" />
+                    <option value="Class 4" />
+                    <option value="Class 5" />
+                  </>
+                )}
+              </datalist>
             </div>
 
             <div>
-              <label className="font-semibold text-gray-700 dark:text-gray-300">Subject</label>
+              <label className="font-semibold text-gray-700 dark:text-gray-300">
+                {isAcademy ? "মূল্যায়নের ধরন ও স্ট্যান্ডার্ড (Standard)" : "পরীক্ষার ধরন (Examination Type)"}
+              </label>
               <select
+                value={assessmentType}
+                onChange={(e) => setAssessmentType(e.target.value)}
+                className="w-full mt-1.5 p-2.5 bg-gray-50 dark:bg-black/40 border border-gray-200 dark:border-white/10 rounded-xl outline-none font-semibold text-gray-900 dark:text-white"
+              >
+                {isAcademy ? (
+                  <>
+                    <option value="Engineering Admission Standard (Udvash Style)">Engineering Admission Standard (Udvash Style)</option>
+                    <option value="Medical Admission Standard (Retina Style)">Medical Admission Standard (Retina Style)</option>
+                    <option value="Varsity 'KA' Admission Standard (Focus Style)">Varsity 'KA' Admission Standard (Focus Style)</option>
+                    <option value="HSC Board Model Assessment">HSC Board Model Assessment</option>
+                  </>
+                ) : (
+                  <>
+                    <option value="NCTB Annual Assessment (বার্ষিক মূল্যায়ন)">NCTB Annual Assessment (বার্ষিক মূল্যায়ন)</option>
+                    <option value="Half-Yearly Examination (অর্ধবার্ষিক পরীক্ষা)">Half-Yearly Examination (অর্ধবার্ষিক পরীক্ষা)</option>
+                    <option value="Class Monthly Assessment (মাসিক মূল্যায়ন)">Class Monthly Assessment (মাসিক মূল্যায়ন)</option>
+                    <option value="Weekly Quiz & Practice Paper (সাপ্তাহিক কুইজ)">Weekly Quiz & Practice Paper (সাপ্তাহিক কুইজ)</option>
+                  </>
+                )}
+              </select>
+            </div>
+          </div>
+
+          {/* Row 2: Subject & Chapter/Topic */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+            <div>
+              <label className="font-semibold text-gray-700 dark:text-gray-300">
+                বিষয় (Type or Select Subject) *
+              </label>
+              <input
+                required
+                list="subject-options"
                 value={subject}
                 onChange={(e) => setSubject(e.target.value)}
+                placeholder={isAcademy ? "e.g. Chemistry 1st Paper, Physics 2nd Paper" : "e.g. বাংলা, English, প্রাথমিক গণিত, বিজ্ঞান"}
                 className="w-full mt-1.5 p-2.5 bg-gray-50 dark:bg-black/40 border border-gray-200 dark:border-white/10 rounded-xl outline-none font-semibold text-gray-900 dark:text-white"
-              >
-                <option value="Physics 1st Paper (পদার্থবিজ্ঞান ১ম পত্র)">Physics 1st Paper (পদার্থবিজ্ঞান ১ম পত্র)</option>
-                <option value="Physics 2nd Paper (পদার্থবিজ্ঞান ২য় পত্র)">Physics 2nd Paper (পদার্থবিজ্ঞান ২য় পত্র)</option>
-                <option value="Chemistry 1st Paper (রসায়ন ১ম পত্র)">Chemistry 1st Paper (রসায়ন ১ম পত্র)</option>
-                <option value="Chemistry 2nd Paper (রসায়ন ২য় পত্র)">Chemistry 2nd Paper (রসায়ন ২য় পত্র)</option>
-                <option value="Higher Math 1st Paper (উচ্চতর গণিত ১ম পত্র)">Higher Math 1st Paper (উচ্চতর গণিত ১ম পত্র)</option>
-                <option value="Biology 1st Paper (উদ্ভিদবিজ্ঞান)">Biology 1st Paper (উদ্ভিদবিজ্ঞান)</option>
-                <option value="General Science (প্রাথমিক ও মাধ্যমিক)">General Science (প্রাথমিক ও মাধ্যমিক)</option>
-              </select>
+              />
+              <datalist id="subject-options">
+                {isAcademy ? (
+                  <>
+                    <option value="Physics 1st Paper" />
+                    <option value="Physics 2nd Paper" />
+                    <option value="Chemistry 1st Paper" />
+                    <option value="Chemistry 2nd Paper" />
+                    <option value="Higher Mathematics" />
+                    <option value="Biology" />
+                  </>
+                ) : (
+                  <>
+                    <option value="বাংলা (Bangla)" />
+                    <option value="English for Today" />
+                    <option value="Elementary Mathematics (প্রাথমিক গণিত)" />
+                    <option value="General Science (প্রাথমিক বিজ্ঞান)" />
+                    <option value="Bangladesh & Global Studies (বাংলাদেশ ও বিশ্বপরিচয়)" />
+                    <option value="Islam & Moral Education (ইসলাম ও নৈতিক শিক্ষা)" />
+                  </>
+                )}
+              </datalist>
             </div>
 
             <div>
-              <label className="font-semibold text-gray-700 dark:text-gray-300">Chapter / Specific Topic *</label>
+              <label className="font-semibold text-gray-700 dark:text-gray-300">
+                অধ্যায় বা সুনির্দিষ্ট পাঠ (Chapter / Topic) *
+              </label>
               <input
                 required
                 value={topic}
                 onChange={(e) => setTopic(e.target.value)}
-                placeholder="e.g. ভেক্টর ও গতিবিদ্যা, মহাকর্ষ"
+                placeholder={isAcademy ? "e.g. জৈব রসায়ন, তাপগতিবিদ্যা, ভেক্টর" : "e.g. গুণ ও ভাগ, ভগ্নাংশ, মহাবিশ্ব, সুন্দরবনের প্রাণী"}
                 className="w-full mt-1.5 p-2.5 bg-gray-50 dark:bg-black/40 border border-gray-200 dark:border-white/10 rounded-xl outline-none text-gray-900 dark:text-white"
               />
             </div>
           </div>
 
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 items-end">
+          {/* Row 3: Questions Count, Duration & Generate Button */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 items-end pt-1">
             <div>
               <label className="font-semibold text-gray-700 dark:text-gray-300">Question Count</label>
               <select
@@ -237,8 +363,8 @@ export default function QuestionBankStudioPage() {
               >
                 <option value="4">4 Questions (Daily Flash Test)</option>
                 <option value="5">5 Questions (Standard Practice)</option>
-                <option value="10">10 Questions (Model Exam)</option>
-                <option value="20">20 Questions (Admission Test)</option>
+                <option value="10">10 Questions (Term Assessment)</option>
+                <option value="20">20 Questions (Full Paper)</option>
               </select>
             </div>
 
@@ -259,20 +385,18 @@ export default function QuestionBankStudioPage() {
                 className="w-full sm:w-auto px-6 py-2.5 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-semibold flex items-center justify-center gap-2 shadow-sm transition-all disabled:opacity-50"
               >
                 {isGenerating ? <Loader2 className="animate-spin" size={15} /> : <Sparkles size={15} />}
-                <span>{isGenerating ? "Generating Questions..." : "Generate Question Draft"}</span>
+                <span>{isGenerating ? "Generating Validated Paper..." : "Generate Question Draft"}</span>
               </button>
             </div>
           </div>
         </form>
       </div>
 
-      {/* ========================================================================= */}
-      {/* 2. LIVE GENERATED QUESTION PAPER PREVIEW & PRINTABLE A4 PAD               */}
-      {/* ========================================================================= */}
+      {/* Live Generated Question Paper Preview & Printable A4 Pad */}
       {activeDraft && (
         <div className="space-y-4">
           
-          {/* Controls Bar (Screen Only) */}
+          {/* Action Bar (Screen Only) */}
           <div className="flex flex-wrap items-center justify-between gap-3 p-4 bg-white dark:bg-[#0f0f11] border border-gray-200 dark:border-white/10 rounded-2xl print:hidden">
             <div className="flex items-center gap-2">
               <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
@@ -304,7 +428,7 @@ export default function QuestionBankStudioPage() {
           {/* Official Printable Question Paper Body */}
           <div className="bg-white text-black p-8 sm:p-12 rounded-3xl border-2 border-black shadow-lg space-y-6 print:border-none print:shadow-none print:p-0">
             
-            {/* Header / Institutional Pad */}
+            {/* Header Pad */}
             <div className="text-center space-y-1 border-b-2 border-black pb-4">
               <h2 className="text-xl sm:text-2xl font-black uppercase tracking-wider">
                 {activeDraft.institution_name}
@@ -314,12 +438,12 @@ export default function QuestionBankStudioPage() {
               </p>
               <div className="pt-2">
                 <span className="font-sans font-bold uppercase text-[11px] bg-black text-white px-4 py-0.5 inline-block rounded">
-                  Official Academic Assessment Examination
+                  {isAcademy ? "Official Admission Assessment Examination" : "NCTB Curriculum Assessment Examination"}
                 </span>
               </div>
             </div>
 
-            {/* Exam Meta & Student Signature Lines */}
+            {/* Exam Meta Info */}
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center text-xs font-mono border-b border-gray-400 pb-3 gap-2">
               <div className="space-y-0.5">
                 <div>Paper: <strong>{activeDraft.title}</strong></div>
@@ -338,7 +462,7 @@ export default function QuestionBankStudioPage() {
 
             {/* Questions List */}
             <div className="space-y-6 pt-2">
-              {activeDraft.questions.map((q: QuestionDraftItem, idx: number) => (
+              {activeDraft.questions.map((q, idx) => (
                 <div key={q.id || idx} className="space-y-2.5 text-xs sm:text-sm">
                   <div className="font-semibold text-gray-900 leading-relaxed flex items-start gap-2">
                     <span className="font-mono font-bold">{idx + 1}.</span>
@@ -347,7 +471,7 @@ export default function QuestionBankStudioPage() {
 
                   {/* 4 Options Grid */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pl-5">
-                    {q.options.map((opt: string, optIdx: number) => {
+                    {q.options.map((opt, optIdx) => {
                       const label = String.fromCharCode(65 + optIdx);
                       const isCorrect = showAnswerKey && (opt === q.correct_option || opt.startsWith(q.correct_option));
 
@@ -372,7 +496,7 @@ export default function QuestionBankStudioPage() {
                   {/* Solution & Explanation Block */}
                   {showAnswerKey && q.explanation && (
                     <div className="ml-5 p-2.5 bg-blue-50 border border-blue-200 rounded-lg text-[11px] text-blue-900 font-serif leading-relaxed">
-                      <strong>Solution & Key:</strong> {q.correct_option} — {q.explanation}
+                      <strong>Solution & Explanation:</strong> {q.correct_option} — {q.explanation}
                     </div>
                   )}
                 </div>
@@ -399,9 +523,7 @@ export default function QuestionBankStudioPage() {
         </div>
       )}
 
-      {/* ========================================================================= */}
-      {/* 3. SAVED QUESTION PAPERS ARCHIVE (Screen View)                            */}
-      {/* ========================================================================= */}
+      {/* Saved Question Papers Registry */}
       <div className="space-y-4 print:hidden">
         <div className="flex justify-between items-center text-xs font-bold uppercase tracking-wider text-gray-400">
           <span>Saved Question Papers Registry</span>
@@ -419,7 +541,7 @@ export default function QuestionBankStudioPage() {
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {savedPapers.map((paper: SavedPaperSummary) => (
+            {savedPapers.map((paper) => (
               <div
                 key={paper.id}
                 onClick={() => loadSavedPaperDraft(paper.id)}

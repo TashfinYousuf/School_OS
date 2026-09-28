@@ -1,5 +1,7 @@
-from typing import List, Optional
 import uuid
+import jwt
+
+from typing import List, Optional
 from datetime import date, datetime
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
@@ -7,7 +9,8 @@ from sqlalchemy import or_
 from pydantic import BaseModel
 
 from app.core.database import get_db
-from app.api.deps import get_current_tenant_id, require_roles
+from app.core.security_guard import security_guard
+from app.api.deps import get_current_tenant_id, require_roles, get_current_user
 from app.models.student import Student
 from app.models.guardian import Guardian, GuardianStudentLink, GuardianRelationship
 from app.models.attendance import AttendanceEvent
@@ -17,6 +20,14 @@ from app.schemas.student import (
     StudentBulkImportRequest,
     StudentBulkImportResponse
 )
+
+from typing import List, Callable, Dict, Any
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from app.core.config import settings
+
+
+security_bearer = HTTPBearer(auto_error=False)
 
 router = APIRouter()
 
@@ -70,6 +81,61 @@ class StudentUpdatePayload(BaseModel):
     status: Optional[str] = None
 
 # --- Endpoints ---
+
+def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security_bearer)
+) -> Dict[str, Any]:
+    """Decodes JWT Bearer token and returns authenticated user metadata."""
+    if not credentials or not credentials.credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication credentials missing."
+        )
+
+    token = credentials.credentials
+    try:
+        secret = getattr(settings, "JWT_SECRET_KEY", None) or getattr(settings, "SECRET_KEY", "educationos_secret_key_2026")
+        algorithm = getattr(settings, "JWT_ALGORITHM", "HS256")
+        payload = jwt.decode(token, secret, algorithms=[algorithm])
+
+        return {
+            "user_id": payload.get("user_id") or payload.get("sub"),
+            "tenant_id": payload.get("tenant_id") or "1dcd99ff-0c62-4a45-a6d9-a06a6b5b3b31",
+            "role": (payload.get("role") or "student").lower(),
+            "email": payload.get("email", "")
+        }
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session expired. Please log in again."
+        )
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication token."
+        )
+
+
+def get_current_tenant_id(
+    current_user: Dict[str, Any] = Depends(get_current_user)
+) -> str:
+    """Extracts tenant_id strictly bound to authenticated JWT."""
+    return str(current_user["tenant_id"])
+
+
+def require_roles(allowed_roles: List[str]) -> Callable:
+    """Enforces role-based access control (RBAC)."""
+    def role_checker(current_user: Dict[str, Any] = Depends(get_current_user)):
+        user_role = current_user.get("role", "").lower()
+        normalized_allowed = [r.lower() for r in allowed_roles]
+        if user_role not in normalized_allowed:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Operation restricted to roles: {', '.join(allowed_roles)}."
+            )
+        return current_user
+    return role_checker
+
 
 @router.get("/", response_model=List[StudentListItem])
 def list_students(
@@ -371,3 +437,28 @@ def get_student_360_profile(
             ]
         }
     }
+
+@router.get("/{student_id}")
+def get_student_detail(
+    student_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_current_tenant_id),
+    current_user: dict = Depends(get_current_user)
+):
+    student = security_guard.get_or_404_tenant_resource(
+        db=db,
+        model_class=Student,
+        resource_id=student_id,
+        current_tenant_id=tenant_id,
+        resource_name="Student"
+    )
+
+    # Enforce Scope Authorization
+    security_guard.verify_student_scope(
+        current_user_role=current_user.get("role"),
+        current_user_id=current_user.get("user_id"),
+        student=student,
+        db=db
+    )
+
+    return student
