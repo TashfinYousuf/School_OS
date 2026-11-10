@@ -41,6 +41,7 @@ FastAPI
 PostgreSQL + object storage + optional vector index
 |
 AI / messaging / payment providers
+
 4. Recommended domain and API boundaries
 /api/v1/auth/*
 /api/v1/organizations/*
@@ -59,6 +60,7 @@ Examples: POST /api/v1/school/assessments, POST /api/v1/academy/exams, POST
 Use explicit schemas, stable error codes, correlation IDs, pagination conventions and idempotency keys for
 attendance, payment confirmation and exam submission. Do not let a frontend toggle silently change a generic
 endpoint's domain semantics.
+
 5. Tenancy, identity and authorization
 Recommended entities: users, organizations, workspaces, memberships, role_permissions, resource_scopes,
 workspace_entitlements.
@@ -68,6 +70,7 @@ using the real application DB role. Add tenant/workspace-consistent foreign-key 
 are UX only, never authorization.
 Guardian access must require verified identity and an explicit child relationship. Disabled memberships and
 revoked sessions must stop accessing protected resources.
+
 6. Exam domain separation
 School assessment: academic session, class, section, subject, term, marks, moderation, grading policy,
 GPA/report card and controlled publication.
@@ -75,6 +78,7 @@ Academy exam: program, campus, batch, candidate eligibility, timer, randomized q
 marking, attempt lifecycle, submission lock, rank/percentile and performance analytics.
 Share low-level primitives only when invariants match. Snapshot exam rules at publication so later edits cannot
 mutate active or completed exams. Make submission idempotent and resilient to network retries.
+
 7. AI generation and model fallback
 EducationOS | Documentation v1.0 | Draft for review Page 3
 Never display preset/demo/Banglish questions when model generation fails. Use a fail-closed pipeline:
