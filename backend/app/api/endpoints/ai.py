@@ -6,8 +6,13 @@ import datetime
 import logging
 import json
 import threading
+import codecs
+import hashlib
+
+from fastapi.concurrency import run_in_threadpool
+
 from typing import Optional, List
-from fastapi import APIRouter, Depends, HTTPException, status, File, UploadFile, Form, BackgroundTasks
+from fastapi import APIRouter, Depends, Request, HTTPException, status, File, UploadFile, Form, BackgroundTasks
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from pydantic import BaseModel, Field
@@ -36,6 +41,10 @@ from app.services.ai_gateway import (
     PromptInjectionDetected,
 )
 from app.services.curriculum_rag import curriculum_rag
+from app.models.tenant import User
+from app.services.ingestion_guard import (
+    TERMINAL, audit_event, get_doc_model, is_running, run_ingestion_job, sweep_stalled_jobs,
+)
 from app.schemas.ai import (
     QuestionPaperGenerateRequest,
     QuestionPaperStructure,
@@ -53,6 +62,55 @@ from app.schemas.ai import (
 router = APIRouter()
 
 logger = logging.getLogger("educationos.ai")
+
+MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+ALLOWED_UPLOAD_EXT = {"pdf", "docx", "txt", "md"}   # ".doc" (purano binary Word) parser support na thakle ei list e nei
+
+
+def _actor_id(claims: dict) -> str:
+    return str(claims.get("user_id") or claims.get("sub") or "unknown")
+
+
+def _client_meta(request: Request) -> dict:
+    return {"ip": request.client.host if request.client else None,
+            "user_agent": (request.headers.get("user-agent") or "")[:200]}
+
+
+def _sniff_upload(ext: str, head: bytes) -> bool:
+    if ext == "pdf":
+        return b"%PDF-" in head[:1024]
+    if ext == "docx":
+        return head.startswith(b"PK\x03\x04")
+    try:
+        codecs.getincrementaldecoder("utf-8")().decode(head, final=False)
+    except UnicodeDecodeError:
+        return False
+    return b"\x00" not in head
+
+
+def _audit_trail(db: Session, tid: str, document_id: str, limit: int = 100) -> list:
+    targets = [f"CurriculumDocument {document_id}", f"CurriculumJob {document_id}"]
+    rows = (db.query(AuditLog)
+              .filter(AuditLog.tenant_id == tid, AuditLog.target_entity.in_(targets))
+              .order_by(AuditLog.timestamp.desc()).limit(limit).all())
+    uuids = []
+    for a in {str(r.actor_id) for r in rows if r.actor_id}:
+        try:
+            uuids.append(uuid.UUID(a))
+        except ValueError:
+            pass
+    emails = {}
+    if uuids:
+        for uid, email in db.query(User.id, User.email).filter(User.tenant_id == tid, User.id.in_(uuids)):
+            emails[str(uid)] = email
+    return [{
+        "at": r.timestamp.isoformat() if getattr(r, "timestamp", None) else None,
+        "action": r.action_type,
+        "actor_id": str(r.actor_id) if r.actor_id else None,
+        "actor": emails.get(str(r.actor_id)) or ("system" if str(r.actor_id) in ("system", "unknown") else None),
+        "risk": r.risk_level,
+        "details": r.event_payload,
+    } for r in rows]
 
 
 class QueryPayload(BaseModel):
@@ -177,7 +235,7 @@ def generate_grounded_response(
         )
 
 
-@router.post("/grounded-query", dependencies=[Depends(require_roles(["admin", "teacher"]))])
+@router.post("/grounded-query")
 def execute_grounded_query(
     payload: QueryPayload,
     db: Session = Depends(get_db),
@@ -203,7 +261,7 @@ def execute_grounded_query(
         )
 
 
-@router.post("/ask", response_model=AIResponse, dependencies=[Depends(require_roles(["admin", "teacher"]))])
+@router.post("/ask", response_model=AIResponse)
 def ask_EducationOS_ai(
     payload: QueryPayload,
     db: Session = Depends(get_db),
@@ -389,117 +447,125 @@ def ingest_curriculum_chunk_endpoint(
 
 @router.post("/curriculum/upload", status_code=status.HTTP_201_CREATED)
 async def upload_curriculum_document(
+    request: Request,
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    title: str = Form(...),
-    class_name: str = Form(...),
-    subject: str = Form(...),
-    chapter: Optional[str] = Form(None),
-    academic_year: str = Form("2026"),
-    group: Optional[str] = Form(None),
-    async_mode: Optional[bool] = Form(None),
-    background_tasks: BackgroundTasks = BackgroundTasks(),
+    title: str = Form(..., min_length=1, max_length=200),
+    class_name: str = Form(..., min_length=1, max_length=50),
+    subject: str = Form(..., min_length=1, max_length=100),
+    chapter: Optional[str] = Form(None, max_length=200),
+    academic_year: str = Form("2026", max_length=9),
+    group: Optional[str] = Form(None, max_length=50),
+    async_mode: Optional[bool] = Form(None),   # ignored: shob upload ekhon async
     db: Session = Depends(get_db),
     tenant_id: str = Depends(get_current_tenant_id),
-    claims: dict = Depends(require_roles(["admin", "superadmin"]))
+    claims: dict = Depends(require_roles(["admin", "superadmin"])),
 ):
-    """
-    Uploads and indexes curriculum documents (PDF textbooks, DOCX lecture notes, TXT).
-    Restricted strictly to Platform Superadmin and Tenant Administrators.
-    Supports durable asynchronous background processing when async_mode=True.
-    """
-    filename = file.filename or "uploaded_document"
-    ext = os.path.splitext(filename)[1].lower().replace(".", "")
-    if ext not in ("pdf", "docx", "doc", "txt", "md"):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=f"Unsupported file format '{ext}'. Allowed: PDF, DOCX, TXT, MD."
-        )
+    """Upload + queue. Parse/embed pore background e hoy, ei request kokhono block kore na."""
+    tid, actor = str(tenant_id), _actor_id(claims)
+    filename = os.path.basename(file.filename or "uploaded_document")[:200]
+    ext = os.path.splitext(filename)[1].lower().lstrip(".")
 
-    file_bytes = await file.read()
-    if len(file_bytes) > 25 * 1024 * 1024:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail="File size exceeds maximum permitted limit of 25MB."
-        )
+    def reject(code: int, detail: str, reason: str):
+        audit_event(db, tid, actor, "curriculum.upload_rejected", f"File {filename}",
+                    {"reason": reason, "ext": ext, **_client_meta(request)}, "Medium")
+        db.commit()
+        raise HTTPException(status_code=code, detail=detail)
+
+    if ext not in ALLOWED_UPLOAD_EXT:
+        reject(422, "Unsupported file format. Allowed: PDF, DOCX, TXT, MD.", "unsupported_extension")
+
+    size, parts = 0, []
+    while True:
+        part = await file.read(1024 * 1024)
+        if not part:
+            break
+        size += len(part)
+        if size > MAX_UPLOAD_BYTES:
+            reject(413, "File size exceeds maximum permitted limit of 25MB.", "too_large")
+        parts.append(part)
+    file_bytes = b"".join(parts)
+    if not file_bytes:
+        reject(422, "No readable text could be extracted: The uploaded file is empty.", "empty")
+    if not _sniff_upload(ext, file_bytes[:65536]):
+        reject(422, f"File content is not a valid .{ext} document.", "content_mismatch")
+
+    # atke thaka purano job age FAILED hoye jak, tarpor duplicate check
+    await run_in_threadpool(sweep_stalled_jobs, db, tid, 120)
+    existing = await run_in_threadpool(curriculum_rag.list_documents, db=db, tenant_id=tid)
+    dup = next((d for d in existing if d.file_name == filename and (d.file_size_bytes or 0) == size
+                and str(d.status).upper() not in ("FAILED", "CANCELLED", "CANCELED")), None)
+    if dup is not None:
+        reject(409, f"'{filename}' is already uploaded (document {dup.id}). Delete it first to upload again.", "duplicate")
 
     if async_mode:
         try:
-            doc = curriculum_rag.ingest_document_async_start(
-                db=db,
-                tenant_id=str(tenant_id),
-                title=title,
-                class_name=class_name,
-                subject=subject,
-                file_name=filename,
-                file_type=ext,
-                file_bytes=file_bytes,
-                chapter=chapter,
-                academic_year=academic_year,
-                group=group
+            doc = await run_in_threadpool(
+                curriculum_rag.ingest_document_async_start,
+                db=db, tenant_id=tid, title=title.strip(), class_name=class_name.strip(),
+                subject=subject.strip(), file_name=filename, file_type=ext, file_bytes=file_bytes,
+                chapter=(chapter or "").strip() or None, academic_year=academic_year, group=group,
             )
-            # Dispatch background worker safely without duplicate concurrent threads
-            if background_tasks:
-                background_tasks.add_task(curriculum_rag.process_document_background, doc.id, str(tenant_id))
-            else:
-                threading.Thread(
-                    target=curriculum_rag.process_document_background,
-                    args=(doc.id, str(tenant_id)),
-                    daemon=True
-                ).start()
-            return {
-                "id": str(doc.id),
-                "job_id": str(doc.id),
-                "title": doc.title,
-                "class_name": doc.class_name,
-                "subject": doc.subject,
-                "chapter": doc.chapter,
-                "file_name": doc.file_name,
-                "filename": doc.file_name,
-                "status": doc.status,
-                "stage": (doc.metadata_payload or {}).get("stage", "queued"),
-                "progress_pct": (doc.metadata_payload or {}).get("progress_pct", 5),
-                "chunks_count": doc.chunks_count,
-                "error_message": doc.error_message,
-                "message": "Curriculum document ingestion queued for asynchronous background processing."
-            }
         except ValueError as ve:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(ve))
+            reject(422, str(ve), "invalid_document")
+
+        sha256 = hashlib.sha256(file_bytes).hexdigest()
+        audit_event(db, tid, actor, "curriculum.upload", f"CurriculumDocument {doc.id}", {
+            "document_id": str(doc.id), "title": title.strip(), "class_name": class_name.strip(),
+            "subject": subject.strip(), "chapter": chapter, "academic_year": academic_year, "group": group,
+            "file_name": filename, "file_type": ext, "size_bytes": size, "sha256": sha256,
+            "content_type": file.content_type, **_client_meta(request),
+        })
+        db.commit()
+        background_tasks.add_task(run_ingestion_job, doc.id, tid, actor)
+
+        meta = doc.metadata_payload or {}
+        return {
+            "id": str(doc.id), "job_id": str(doc.id), "title": doc.title, "class_name": doc.class_name,
+            "subject": doc.subject, "chapter": doc.chapter, "file_name": doc.file_name, "filename": doc.file_name,
+            "status": doc.status, "stage": meta.get("stage", "queued"), "progress_pct": meta.get("progress_pct", 5),
+            "chunks_count": doc.chunks_count, "error_message": doc.error_message, "sha256": sha256,
+            "uploaded_by": actor, "message": "Document queued for background indexing.",
+        }
 
     # Synchronous processing (default / backward compatible)
-    doc = curriculum_rag.ingest_document(
-        db=db,
-        tenant_id=str(tenant_id),
-        title=title,
-        class_name=class_name,
-        subject=subject,
-        file_name=filename,
-        file_type=ext,
-        file_bytes=file_bytes,
-        chapter=chapter,
-        academic_year=academic_year,
-        group=group
-    )
+    try:
+        doc = await run_in_threadpool(
+            curriculum_rag.ingest_document,
+            db=db,
+            tenant_id=tid,
+            title=title.strip(),
+            class_name=class_name.strip(),
+            subject=subject.strip(),
+            file_name=filename,
+            file_type=ext,
+            file_bytes=file_bytes,
+            chapter=(chapter or "").strip() or None,
+            academic_year=academic_year,
+            group=group
+        )
+    except ValueError as ve:
+        reject(422, str(ve), "invalid_document")
 
     if doc.status == "FAILED":
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail=doc.error_message or "Curriculum document processing failed."
-        )
+        reject(422, doc.error_message or "Ingestion failed.", "ingestion_failed")
 
+    sha256 = hashlib.sha256(file_bytes).hexdigest()
+    audit_event(db, tid, actor, "curriculum.upload_sync", f"CurriculumDocument {doc.id}", {
+        "document_id": str(doc.id), "title": title.strip(), "class_name": class_name.strip(),
+        "subject": subject.strip(), "chapter": chapter, "academic_year": academic_year, "group": group,
+        "file_name": filename, "file_type": ext, "size_bytes": size, "sha256": sha256,
+        "content_type": file.content_type, **_client_meta(request),
+    })
+    db.commit()
+
+    meta = doc.metadata_payload or {}
     return {
-        "id": str(doc.id),
-        "job_id": str(doc.id),
-        "title": doc.title,
-        "class_name": doc.class_name,
-        "subject": doc.subject,
-        "chapter": doc.chapter,
-        "file_name": doc.file_name,
-        "filename": doc.file_name,
-        "status": doc.status,
-        "stage": (doc.metadata_payload or {}).get("stage", "completed"),
-        "progress_pct": (doc.metadata_payload or {}).get("progress_pct", 100),
-        "chunks_count": doc.chunks_count,
-        "error_message": doc.error_message
+        "id": str(doc.id), "job_id": str(doc.id), "title": doc.title, "class_name": doc.class_name,
+        "subject": doc.subject, "chapter": doc.chapter, "file_name": doc.file_name, "filename": doc.file_name,
+        "status": doc.status, "stage": meta.get("stage", "ready"), "progress_pct": 100,
+        "chunks_count": doc.chunks_count, "error_message": doc.error_message, "sha256": sha256,
+        "uploaded_by": actor, "message": "Document indexed successfully.",
     }
 
 
@@ -508,38 +574,21 @@ def get_curriculum_ingestion_job(
     job_id: str,
     db: Session = Depends(get_db),
     tenant_id: str = Depends(get_current_tenant_id),
-    _=Depends(require_roles(["admin", "superadmin", "teacher"]))
+    _=Depends(require_roles(["admin", "superadmin", "teacher"])),
 ):
-    """
-    Returns real-time progress, active stage, and chunk metrics for an asynchronous ingestion job.
-    """
     try:
         job_uuid = uuid.UUID(job_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid job UUID")
+    tid = str(tenant_id)
 
-    stat = curriculum_rag.get_document_status(db=db, tenant_id=str(tenant_id), document_id=job_uuid)
+    stat = curriculum_rag.get_document_status(db=db, tenant_id=tid, document_id=job_uuid)
     if not stat:
         raise HTTPException(status_code=404, detail="Curriculum ingestion job not found")
 
-    # Auto-revive background worker if job is in QUEUED state and has stalled (>30s)
-    if stat.get("status") == "QUEUED" and stat.get("stage") == "queued":
-        queued_at_str = stat.get("queued_at")
-        stalled = False
-        if queued_at_str:
-            try:
-                queued_dt = datetime.datetime.fromisoformat(queued_at_str)
-                if (datetime.datetime.now(datetime.timezone.utc) - queued_dt).total_seconds() > 30:
-                    stalled = True
-            except Exception:
-                pass
-        if stalled:
-            threading.Thread(
-                target=curriculum_rag.process_document_background,
-                args=(job_uuid, str(tenant_id)),
-                daemon=True
-            ).start()
-
+    if str(stat.get("status") or "").upper() not in TERMINAL and sweep_stalled_jobs(db, tid, 120):
+        db.expire_all()
+        stat = curriculum_rag.get_document_status(db=db, tenant_id=tid, document_id=job_uuid) or stat
     return stat
 
 
@@ -579,14 +628,8 @@ def cancel_curriculum_ingestion_job(
     if not res:
         raise HTTPException(status_code=404, detail="Curriculum ingestion job not found")
     
-    db.add(AuditLog(
-        tenant_id=str(tenant_id),
-        actor_id=str(claims.get("user_id")),
-        action_type="curriculum.ingestion_cancelled",
-        target_entity=f"CurriculumJob {job_id}",
-        event_payload={"job_id": job_id},
-        risk_level="Low"
-    ))
+    audit_event(db, tenant_id, _actor_id(claims), "curriculum.ingestion_cancelled",
+                f"CurriculumDocument {job_id}", {"document_id": job_id})
     db.commit()
     return res
 
@@ -611,17 +654,11 @@ def retry_curriculum_ingestion_job(
     if not res:
         raise HTTPException(status_code=404, detail="Curriculum ingestion job not found")
 
-    background_tasks.add_task(curriculum_rag.process_document_background, job_uuid, str(tenant_id))
-
-    db.add(AuditLog(
-        tenant_id=str(tenant_id),
-        actor_id=str(claims.get("user_id")),
-        action_type="curriculum.ingestion_retried",
-        target_entity=f"CurriculumJob {job_id}",
-        event_payload={"job_id": job_id},
-        risk_level="Low"
-    ))
+    audit_event(db, tenant_id, _actor_id(claims), "curriculum.ingestion_retried",
+                f"CurriculumDocument {job_id}", {"document_id": job_id})
     db.commit()
+    background_tasks.add_task(run_ingestion_job, job_uuid, str(tenant_id), _actor_id(claims))
+
     return res
 
 
@@ -691,7 +728,7 @@ def get_curriculum_document_preview(
     document_id: str,
     db: Session = Depends(get_db),
     tenant_id: str = Depends(get_current_tenant_id),
-    _=Depends(require_roles(["admin", "superadmin", "teacher"]))
+    claims: dict = Depends(require_roles(["admin", "superadmin", "teacher"]))
 ):
     """
     Returns a sanitized preview extract from indexed document chunks.
@@ -704,6 +741,10 @@ def get_curriculum_document_preview(
     prev = curriculum_rag.get_document_preview(db=db, tenant_id=str(tenant_id), document_id=doc_uuid)
     if not prev:
         raise HTTPException(status_code=404, detail="Curriculum document not found")
+    
+    audit_event(db, tenant_id, _actor_id(claims), "curriculum.document_viewed",
+                f"CurriculumDocument {document_id}", {"view": "preview"})
+    db.commit()
     return prev
 
 
@@ -712,19 +753,28 @@ def delete_curriculum_document(
     document_id: str,
     db: Session = Depends(get_db),
     tenant_id: str = Depends(get_current_tenant_id),
-    _=Depends(require_roles(["admin", "superadmin"]))
+    claims: dict = Depends(require_roles(["admin", "superadmin"])),
 ):
-    """
-    Deletes an uploaded curriculum document and all associated chunks.
-    """
     try:
         doc_uuid = uuid.UUID(document_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid document UUID")
+    tid = str(tenant_id)
+    if is_running(doc_uuid):
+        raise HTTPException(status_code=409, detail="Document is still being processed. Cancel the job first.")
 
-    success = curriculum_rag.delete_document(db=db, tenant_id=str(tenant_id), document_id=doc_uuid)
-    if not success:
+    snap = curriculum_rag.get_document_status(db=db, tenant_id=tid, document_id=doc_uuid)
+    if not snap:
         raise HTTPException(status_code=404, detail="Curriculum document not found")
+    if not curriculum_rag.delete_document(db=db, tenant_id=tid, document_id=doc_uuid):
+        raise HTTPException(status_code=404, detail="Curriculum document not found")
+
+    audit_event(db, tid, _actor_id(claims), "curriculum.document_deleted", f"CurriculumDocument {document_id}",
+                {"document_id": document_id,
+                 "snapshot": {k: snap.get(k) for k in ("title", "file_name", "class_name", "subject",
+                                                      "status", "chunks_count", "chunks_indexed")}},
+                "Medium")
+    db.commit()
     return {"message": "Document and knowledge chunks removed successfully"}
 
 
@@ -787,3 +837,78 @@ def get_ai_budget_status(
         is_hard_locked=budget.is_hard_locked,
         monthly_budget_usd=budget.monthly_budget_usd,
     )
+
+class CurriculumDocumentUpdate(BaseModel):
+    title: Optional[str] = Field(None, min_length=1, max_length=200)
+    chapter: Optional[str] = Field(None, max_length=200)
+    academic_year: Optional[str] = Field(None, max_length=9)
+    group: Optional[str] = Field(None, max_length=50)
+
+
+@router.get("/curriculum/documents/{document_id}")
+def get_curriculum_document_detail(
+    document_id: str,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_current_tenant_id),
+    _=Depends(require_roles(["admin", "superadmin", "teacher"])),
+):
+    """Metadata + status + kon file k upload/edit/delete korlo tar puro audit trail."""
+    try:
+        doc_uuid = uuid.UUID(document_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid document UUID")
+    tid = str(tenant_id)
+    stat = curriculum_rag.get_document_status(db=db, tenant_id=tid, document_id=doc_uuid)
+    if not stat:
+        raise HTTPException(status_code=404, detail="Curriculum document not found")
+    trail = _audit_trail(db, tid, document_id)
+    upload = next((e for e in reversed(trail) if e["action"] == "curriculum.upload"), None)
+    return {"status": stat, "uploaded": upload, "audit": trail}
+
+
+@router.get("/curriculum/documents/{document_id}/audit")
+def get_curriculum_document_audit(
+    document_id: str,
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_current_tenant_id),
+    _=Depends(require_roles(["admin", "superadmin"])),
+):
+    return _audit_trail(db, str(tenant_id), document_id, min(max(limit, 1), 500))
+
+
+@router.patch("/curriculum/documents/{document_id}")
+def update_curriculum_document(
+    document_id: str,
+    payload: CurriculumDocumentUpdate,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_current_tenant_id),
+    claims: dict = Depends(require_roles(["admin", "superadmin"])),
+):
+    """Metadata edit. class_name/subject ekhane nei: chunk e copy thake, tai oi duto bodlale Retry (re-index) lagbe."""
+    try:
+        doc_uuid = uuid.UUID(document_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid document UUID")
+    tid = str(tenant_id)
+    M = get_doc_model()
+    doc = db.query(M).filter(M.id == doc_uuid, M.tenant_id == tid).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Curriculum document not found")
+
+    before, after = {}, {}
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        if value is None or not hasattr(doc, field):
+            continue
+        value = value.strip() if isinstance(value, str) else value
+        old = getattr(doc, field)
+        if old != value:
+            before[field], after[field] = old, value
+            setattr(doc, field, value)
+    if not after:
+        return {"message": "No changes", "changed": []}
+
+    audit_event(db, tid, _actor_id(claims), "curriculum.document_updated",
+                f"CurriculumDocument {document_id}", {"before": before, "after": after})
+    db.commit()
+    return {"message": "Document updated", "changed": list(after)}

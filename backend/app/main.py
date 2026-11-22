@@ -1,4 +1,4 @@
-import logging
+import logging, os
 import time
 import uuid
 
@@ -33,6 +33,7 @@ from app.models.finance import FeePayment
 from app.models.workspace import Workspace, WorkspaceMembership
 from app.models.subscription import InstitutionSubscription
 
+from app.services.ingestion_guard import sweep_stalled_jobs
 
 # Import routers after models are defined
 from app.api.endpoints import tenants
@@ -119,6 +120,19 @@ async def lifespan(app: FastAPI):
                 logger.info("Auto-created database tables via metadata.")
             except Exception as e:
                 logger.warning("Auto-create tables skipped: %s", e)
+
+        # 3. Sweep orphaned ingestion jobs on startup
+        try:
+            prod = os.getenv("APP_ENV", "dev").lower() in {"prod", "production"}
+            db_session = SessionLocal()
+            try:
+                n = sweep_stalled_jobs(db_session, None, older_than_s=900 if prod else 0)
+                if n:
+                    logger.warning("%s orphaned ingestion job(s) marked FAILED", n)
+            finally:
+                db_session.close()
+        except Exception:
+            logger.exception("ingestion sweep failed")
 
     yield
 

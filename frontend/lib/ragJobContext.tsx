@@ -166,7 +166,7 @@ export function RagJobProvider({ children }: { children: React.ReactNode }) {
       {activeJob && (
         <aside
           aria-label="Background Curriculum Ingestion"
-          className="fixed bottom-5 right-5 z-[999] max-w-sm w-full bg-white dark:bg-[#121216] border border-blue-200 dark:border-blue-900/60 shadow-2xl rounded-2xl p-4 transition-all animate-in slide-in-from-bottom-5"
+          className="fixed bottom-5 right-5 z-999 max-w-sm w-full bg-white dark:bg-[#121216] border border-blue-200 dark:border-blue-900/60 shadow-2xl rounded-2xl p-4 transition-all animate-in slide-in-from-bottom-5"
         >
           <div className="flex items-center justify-between pb-2 mb-2 border-b border-gray-100 dark:border-white/10">
             <div className="flex items-center gap-2">

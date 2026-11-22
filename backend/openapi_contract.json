@@ -2734,6 +2734,7 @@
         "properties": {
           "academic_year": {
             "default": "2026",
+            "maxLength": 9,
             "title": "Academic Year",
             "type": "string"
           },
@@ -2751,6 +2752,7 @@
           "chapter": {
             "anyOf": [
               {
+                "maxLength": 200,
                 "type": "string"
               },
               {
@@ -2760,6 +2762,8 @@
             "title": "Chapter"
           },
           "class_name": {
+            "maxLength": 50,
+            "minLength": 1,
             "title": "Class Name",
             "type": "string"
           },
@@ -2771,6 +2775,7 @@
           "group": {
             "anyOf": [
               {
+                "maxLength": 50,
                 "type": "string"
               },
               {
@@ -2780,10 +2785,14 @@
             "title": "Group"
           },
           "subject": {
+            "maxLength": 100,
+            "minLength": 1,
             "title": "Subject",
             "type": "string"
           },
           "title": {
+            "maxLength": 200,
+            "minLength": 1,
             "title": "Title",
             "type": "string"
           }
@@ -3554,6 +3563,61 @@
           "excerpt"
         ],
         "title": "CurriculumCitation",
+        "type": "object"
+      },
+      "CurriculumDocumentUpdate": {
+        "properties": {
+          "academic_year": {
+            "anyOf": [
+              {
+                "maxLength": 9,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Academic Year"
+          },
+          "chapter": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chapter"
+          },
+          "group": {
+            "anyOf": [
+              {
+                "maxLength": 50,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "CurriculumDocumentUpdate",
         "type": "object"
       },
       "CurriculumQueryRequest": {
@@ -13914,7 +13978,6 @@
     },
     "/api/v1/ai/curriculum/documents/{document_id}": {
       "delete": {
-        "description": "Deletes an uploaded curriculum document and all associated chunks.",
         "operationId": "delete_curriculum_document_api_v1_ai_curriculum_documents__document_id__delete",
         "parameters": [
           {
@@ -13969,6 +14032,207 @@
           }
         ],
         "summary": "Delete Curriculum Document",
+        "tags": [
+          "AI Gateway"
+        ]
+      },
+      "get": {
+        "description": "Metadata + status + kon file k upload/edit/delete korlo tar puro audit trail.",
+        "operationId": "get_curriculum_document_detail_api_v1_ai_curriculum_documents__document_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "Document Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Tenant-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Tenant-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get Curriculum Document Detail",
+        "tags": [
+          "AI Gateway"
+        ]
+      },
+      "patch": {
+        "description": "Metadata edit. class_name/subject ekhane nei: chunk e copy thake, tai oi duto bodlale Retry (re-index) lagbe.",
+        "operationId": "update_curriculum_document_api_v1_ai_curriculum_documents__document_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "Document Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Tenant-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Tenant-Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CurriculumDocumentUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Update Curriculum Document",
+        "tags": [
+          "AI Gateway"
+        ]
+      }
+    },
+    "/api/v1/ai/curriculum/documents/{document_id}/audit": {
+      "get": {
+        "operationId": "get_curriculum_document_audit_api_v1_ai_curriculum_documents__document_id__audit_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "document_id",
+            "required": true,
+            "schema": {
+              "title": "Document Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Tenant-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Tenant-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get Curriculum Document Audit",
         "tags": [
           "AI Gateway"
         ]
@@ -14228,7 +14492,6 @@
     },
     "/api/v1/ai/curriculum/jobs/{job_id}": {
       "get": {
-        "description": "Returns real-time progress, active stage, and chunk metrics for an asynchronous ingestion job.",
         "operationId": "get_curriculum_ingestion_job_api_v1_ai_curriculum_jobs__job_id__get",
         "parameters": [
           {
@@ -14479,7 +14742,7 @@
     },
     "/api/v1/ai/curriculum/upload": {
       "post": {
-        "description": "Uploads and indexes curriculum documents (PDF textbooks, DOCX lecture notes, TXT).\nRestricted strictly to Platform Superadmin and Tenant Administrators.\nSupports durable asynchronous background processing when async_mode=True.",
+        "description": "Upload + queue. Parse/embed pore background e hoy, ei request kokhono block kore na.",
         "operationId": "upload_curriculum_document_api_v1_ai_curriculum_upload_post",
         "parameters": [
           {

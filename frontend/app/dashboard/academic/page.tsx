@@ -332,10 +332,10 @@ export default function AcademicPage() {
   const [isRetryingJob, setIsRetryingJob] = useState(false);
   const [uploadForm, setUploadForm] = useState({
     title: "",
-    class_name: "Class 9",
-    subject: "General Science",
+    class_name: "",
+    subject: "",
     chapter: "",
-    academic_year: "2026",
+    academic_year: "2027",
   });
 
   // --- Class Routine State ---
@@ -369,8 +369,8 @@ export default function AcademicPage() {
 
   // --- Daily Teaching Hub State ---
   const [lessonForm, setLessonForm] = useState({
-    class_name: "Class 5",
-    subject: "General Science",
+    class_name: "",
+    subject: "",
     teacher_name: "",
     topic_title: "",
     lecture_summary: "",
@@ -382,8 +382,8 @@ export default function AcademicPage() {
 
   // AI Handout Generator State
   const [aiGeneratorForm, setAiGeneratorForm] = useState({
-    class_name: "Class 5",
-    subject: "General Science",
+    class_name: "",
+    subject: "",
     topic_title: "",
   });
   const [generatingHandout, setGeneratingHandout] = useState(false);
@@ -612,18 +612,13 @@ export default function AcademicPage() {
     if (!activeJob?.id) return;
     setIsRetryingJob(true);
     setUploadError(null);
-    setUploadingDoc(true);
     try {
-      const res = await fetchWithTenant(`/api/v1/ai/curriculum/jobs/${activeJob.id}/retry`, {
-        method: "POST"
-      });
-      if (res.ok) {
-        const data = await res.json();
-        startTrackingJob(data);
-      }
+      const res = await fetchWithTenant(`/api/v1/ai/curriculum/jobs/${activeJob.id}/retry`, { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || `Retry failed (${res.status})`);
+      startTrackingJob(data);
     } catch (err: any) {
       setUploadError(err.message || "Retry failed.");
-      setUploadingDoc(false);
     } finally {
       setIsRetryingJob(false);
     }
@@ -639,6 +634,9 @@ export default function AcademicPage() {
     setUploadError(null);
     setUploadSuccess(null);
 
+    const ctrl = new AbortController();
+    const timeout = setTimeout(() => ctrl.abort(), 120_000);
+
     try {
       const fd = new FormData();
       fd.append("file", selectedFile);
@@ -649,15 +647,10 @@ export default function AcademicPage() {
       if (uploadForm.academic_year) fd.append("academic_year", uploadForm.academic_year);
       fd.append("async_mode", "true");
 
-      const res = await fetchWithTenant("/api/v1/ai/curriculum/upload", {
-        method: "POST",
-        body: fd,
-      });
+      const res = await fetchWithTenant("/api/v1/ai/curriculum/upload", { method: "POST", body: fd, signal: ctrl.signal });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.detail || `Upload failed (${res.status}).`);
 
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.detail || "Upload failed.");
-      }
 
       const jobId = data.job_id || data.id;
       startTrackingJob({
@@ -673,26 +666,25 @@ export default function AcademicPage() {
       });
 
       setSelectedFile(null);
-      setUploadForm({
-        title: "",
-        class_name: "",
-        subject: "",
-        chapter: "",
-        academic_year: "2027",
-      });
-      setUploadingDoc(false);
+      setUploadForm({ title: "", class_name: "", subject: "", chapter: "", academic_year: "2027" });
       setIsUploadModalOpen(false);
-      setUploadSuccess(
-        language === "EN"
-          ? "Document queued for background indexing. You can navigate freely."
-          : "ডকুমেন্টটি ব্যাকগ্রাউন্ড ইনডেক্সিংয়ের জন্য যুক্ত হয়েছে। আপনি নির্দ্বিধায় ব্রাউজ করতে পারেন।"
-      );
-      fetchCurriculumDocs();
+      setUploadSuccess(language === "EN"
+        ? "Document queued for background indexing. You can navigate freely."
+        : "ডকুমেন্টটি ব্যাকগ্রাউন্ড ইনডেক্সিংয়ের জন্য যুক্ত হয়েছে। আপনি নির্দ্বিধায় ব্রাউজ করতে পারেন।");
+      void fetchCurriculumDocs();
     } catch (err: any) {
-      setUploadError(err.message || "Failed to upload document.");
-      setUploadingDoc(false);
-    }
+      setUploadError(err?.name === "AbortError" ? "Upload timed out. Network check kore abar chesta koro." : (err.message || "Failed to upload document."));
+    } finally {
+      clearTimeout(timeout);
+      setUploadingDoc(false);          // success/fail/timeout, sob case e spinner bondho
+}
   };
+
+  useEffect(() => {
+    if (activeTab !== "knowledge-base" && activeTab !== "curriculum") return;
+    const t = setTimeout(() => { void fetchCurriculumDocs(); }, 350);
+    return () => clearTimeout(t);
+  }, [activeTab, kbFilterClass, kbFilterSubject]);
 
   const handleDeleteDoc = async (docId: string, title: string) => {
     if (!confirm(language === "EN" ? `Are you sure you want to delete "${title}" and its RAG knowledge chunks?` : `আপনি কি নিশ্চিত যে "${title}" এবং এর নলেজ চাঙ্ক মুছে ফেলতে চান?`)) return;
