@@ -522,6 +522,250 @@ def get_student_fee_history(
     }
 
 
+class PortalChildInfo(BaseModel):
+    id: str
+    student_name: str
+    admission_number: str
+    class_name: Optional[str] = ""
+    roll_number: Optional[str] = ""
+
+
+class PortalStudentInfo(BaseModel):
+    id: str
+    first_name: str
+    last_name: str
+    admission_number: str
+    class_name: Optional[str] = ""
+
+
+class PortalFeePaymentItem(BaseModel):
+    id: str
+    receipt_no: str
+    student_name: str
+    fee_type: str
+    billing_month: str
+    amount_paid: float
+    payment_method: str
+    transaction_id: str
+    payment_date: str
+
+
+class PortalFeeInvoiceItem(BaseModel):
+    id: str
+    invoice_number: str
+    title: str
+    amount: float
+    status: str
+
+
+class PortalFeeSummaryResponse(BaseModel):
+    student: Optional[PortalStudentInfo] = None
+    total_paid: float = 0.0
+    total_due: float = 0.0
+    currency: str = "BDT"
+    children: List[PortalChildInfo] = Field(default_factory=list)
+    payments: List[PortalFeePaymentItem] = Field(default_factory=list)
+    invoices: List[PortalFeeInvoiceItem] = Field(default_factory=list)
+
+
+@router.get("/portal/fee-summary", response_model=PortalFeeSummaryResponse)
+def get_portal_fee_summary(
+    student_id: Optional[uuid.UUID] = Query(None),
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_current_tenant_id),
+    current_user: User = Depends(get_current_user),
+    claims: dict = Depends(get_current_user_claims)
+):
+    """
+    Dedicated read-only fee and money receipt overview for Guardians and Students.
+    Strictly verifies Guardian-to-Child links to eliminate horizontal BOLA/IDOR leakage.
+    Provides sibling switching list for multi-child households.
+    """
+    tid_str = str(tenant_id)
+    role = (current_user.role or claims.get("role") or "").lower()
+
+    if role not in ["superadmin", "admin", "finance_officer", "accountant", "teacher", "guardian", "student"]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied.")
+
+    target_student = None
+    children: List[PortalChildInfo] = []
+
+    if role == "guardian":
+        cuid = current_user.id
+        guardian = db.query(Guardian).filter(
+            (Guardian.user_id == cuid) | (Guardian.id == cuid),
+            Guardian.tenant_id == tid_str
+        ).first()
+
+        if not guardian:
+            return PortalFeeSummaryResponse()
+
+        links = (
+            db.query(GuardianStudentLink, Student)
+            .join(Student, Student.id == GuardianStudentLink.student_id)
+            .filter(
+                GuardianStudentLink.guardian_id == guardian.id,
+                GuardianStudentLink.tenant_id == tid_str,
+                GuardianStudentLink.verification_status == "VERIFIED"
+            )
+            .all()
+        )
+
+        if not links:
+            return PortalFeeSummaryResponse()
+
+        children = [
+            PortalChildInfo(
+                id=str(s.id),
+                student_name=f"{s.first_name} {s.last_name}".strip(),
+                admission_number=s.admission_number,
+                class_name=getattr(s, "class_name", "") or "",
+                roll_number=str(getattr(s, "roll_number", "") or "")
+            )
+            for _, s in links
+        ]
+
+        if student_id:
+            sid_str = str(student_id)
+            matched = [s for _, s in links if str(s.id) == sid_str]
+            if not matched:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied: You are not authorized to view this student's fee statement."
+                )
+            target_student = matched[0]
+        else:
+            target_student = links[0][1]
+
+    elif role == "student":
+        target_student = db.query(Student).filter(
+            Student.tenant_id == tid_str,
+            (Student.user_id == current_user.id) | (Student.id == current_user.id)
+        ).first()
+
+        if not target_student:
+            return PortalFeeSummaryResponse()
+
+        children = [
+            PortalChildInfo(
+                id=str(target_student.id),
+                student_name=f"{target_student.first_name} {target_student.last_name}".strip(),
+                admission_number=target_student.admission_number,
+                class_name=getattr(target_student, "class_name", "") or "",
+                roll_number=str(getattr(target_student, "roll_number", "") or "")
+            )
+        ]
+
+    else:
+        # Admin / Staff
+        if student_id:
+            target_student = db.query(Student).filter(
+                Student.id == student_id,
+                Student.tenant_id == tid_str
+            ).first()
+            if not target_student:
+                raise HTTPException(status_code=404, detail="Student not found.")
+        else:
+            target_student = db.query(Student).filter(Student.tenant_id == tid_str).first()
+            if not target_student:
+                return PortalFeeSummaryResponse()
+
+        children = [
+            PortalChildInfo(
+                id=str(target_student.id),
+                student_name=f"{target_student.first_name} {target_student.last_name}".strip(),
+                admission_number=target_student.admission_number,
+                class_name=getattr(target_student, "class_name", "") or "",
+                roll_number=str(getattr(target_student, "roll_number", "") or "")
+            )
+        ]
+
+    payments = (
+        db.query(FeePayment)
+        .filter(
+            FeePayment.tenant_id == tid_str,
+            FeePayment.student_id == target_student.id
+        )
+        .order_by(FeePayment.created_at.desc())
+        .all()
+    )
+
+    invoices = (
+        db.query(Invoice)
+        .filter(
+            Invoice.tenant_id == tid_str,
+            Invoice.student_id == str(target_student.id)
+        )
+        .order_by(Invoice.created_at.desc())
+        .all()
+    )
+
+    total_paid = sum(
+        float(getattr(p, "amount", getattr(p, "amount_paid", 0.0)) or 0.0)
+        for p in payments
+        if getattr(p, "payment_status", "COMPLETED") in ("COMPLETED", "PAID")
+    )
+
+    total_due = sum(
+        float(inv.total_amount - inv.discount_amount - inv.paid_amount)
+        for inv in invoices
+        if inv.status in (InvoiceStatus.ISSUED.value, InvoiceStatus.PARTIALLY_PAID.value, InvoiceStatus.OVERDUE.value)
+    )
+    if not invoices and hasattr(target_student, "outstanding_balance") and target_student.outstanding_balance:
+        total_due = float(target_student.outstanding_balance)
+
+    portal_payments: List[PortalFeePaymentItem] = []
+    for p in payments:
+        meta = getattr(p, "metadata_payload", {}) or {}
+        notes_str = getattr(p, "notes", "") or ""
+        fee_name = meta.get("fee_type") or getattr(p, "fee_type", None) or (notes_str.split(" - ")[0] if " - " in notes_str else "Tuition Fee")
+        month_name = meta.get("billing_month") or getattr(p, "billing_month", None) or "Regular"
+        p_date = getattr(p, "payment_date", getattr(p, "created_at", None))
+        p_date_str = p_date.strftime("%d %b, %Y") if isinstance(p_date, (datetime.datetime, datetime.date)) else "N/A"
+
+        portal_payments.append(
+            PortalFeePaymentItem(
+                id=str(p.id),
+                receipt_no=getattr(p, "receipt_no", getattr(p, "receipt_number", "REC-PENDING")),
+                student_name=f"{target_student.first_name} {target_student.last_name}".strip(),
+                fee_type=fee_name,
+                billing_month=month_name,
+                amount_paid=float(getattr(p, "amount", getattr(p, "amount_paid", 0.0)) or 0.0),
+                payment_method=sanitize_payment_method(getattr(p, "payment_method", "CASH")),
+                transaction_id=getattr(p, "transaction_id", getattr(p, "provider_transaction_id", "N/A")) or "N/A",
+                payment_date=p_date_str
+            )
+        )
+
+    portal_invoices: List[PortalFeeInvoiceItem] = [
+        PortalFeeInvoiceItem(
+            id=str(inv.id),
+            invoice_number=inv.invoice_number,
+            title=inv.title,
+            amount=float(inv.total_amount),
+            status=inv.status
+        )
+        for inv in invoices
+    ]
+
+    return PortalFeeSummaryResponse(
+        student=PortalStudentInfo(
+            id=str(target_student.id),
+            first_name=target_student.first_name,
+            last_name=target_student.last_name,
+            admission_number=target_student.admission_number,
+            class_name=getattr(target_student, "class_name", "") or ""
+        ),
+        total_paid=total_paid,
+        total_due=max(0.0, total_due),
+        currency="BDT",
+        children=children,
+        payments=portal_payments,
+        invoices=portal_invoices
+    )
+
+
+
 # ----------------------------------------------------------------------------------------
 # 3. Fee Collection Endpoint (BLK-P0-08 Hardened)
 # ----------------------------------------------------------------------------------------

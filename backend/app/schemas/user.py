@@ -1,10 +1,10 @@
-from pydantic import BaseModel, EmailStr, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Optional
 from uuid import UUID
 from datetime import datetime
 
 class UserBase(BaseModel):
-    email: EmailStr = Field(..., title="User's email address")
+    email: str = Field(..., title="User's email address")
     is_active: bool = True
     role: Optional[str] = "teacher"
 
@@ -16,5 +16,9 @@ class UserResponse(UserBase):
     id: UUID
     tenant_id: UUID
     created_at: datetime
+    username: Optional[str] = None
+    phone_number: Optional[str] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)

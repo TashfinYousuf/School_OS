@@ -143,3 +143,4 @@ To protect child safety and student privacy, **only authorized guardians linked 
   অভিভাবক পাসওয়ার্ড ভুলে গেলে অ্যাডমিন `/dashboard/guardians` পেজ থেকে **"Reset"** চেপে নতুন লিংক প্রদান করবেন।
 - **সাময়িক স্থগিত বা বন্ধ:**  
   জরুরি প্রয়োজনে **"Suspend"** চেপে অ্যাকাউন্ট বন্ধ রাখা যাবে এবং **"Reactivate"** চেপে পুনরায় চালু করা যাবে।
+

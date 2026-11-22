@@ -529,7 +529,7 @@ export default function FeeLedgerPage() {
                       <div className="text-right">
                         <div className="font-bold font-mono text-emerald-600 dark:text-emerald-400">৳{p.amount_paid.toLocaleString()}</div>
                         <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-500/10 text-emerald-600 font-semibold">
-                          Cleared
+                          {language === "EN" ? "Cleared" : "পরিশোধিত"}
                         </span>
                       </div>
                     </div>
@@ -541,8 +541,12 @@ export default function FeeLedgerPage() {
         ) : (
           <div className="p-10 text-center bg-white dark:bg-[#0f0f11] border border-gray-200 dark:border-white/10 rounded-2xl text-xs text-gray-400">
             {userRole === "guardian"
-              ? "No verified children linked yet. Please contact school administration or submit a child link request."
-              : "No student fee summary available."}
+              ? (language === "EN" 
+                  ? "No verified children linked yet. Please contact school administration or submit a child link request."
+                  : "এখনও কোনো সন্তান লিঙ্ক করা হয়নি। অনুগ্রহ করে বিদ্যালয় প্রশাসনের সাথে যোগাযোগ করুন।")
+              : (language === "EN" 
+                  ? "No student fee summary available."
+                  : "কোনো শিক্ষার্থীর ফি বিবরণ পাওয়া যায়নি।")}
           </div>
         )}
       </div>

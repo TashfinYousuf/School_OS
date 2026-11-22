@@ -1,7 +1,7 @@
 import uuid
 import datetime
 import logging
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Header, status
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
@@ -9,10 +9,28 @@ from pydantic import BaseModel, Field
 from app.api.deps import get_db, get_current_user, get_current_tenant_id, require_roles
 from app.models.workspace import Workspace, WorkspaceMembership, InstitutionalMembership, Organization, WorkspaceType
 from app.models.tenant import User, SchoolProfile
+from app.services.institution import get_institution_profile
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def normalize_enabled_modules(raw: Any) -> Dict[str, Any]:
+    """Ensures enabled_modules is always a dictionary mapping module name to enabled boolean."""
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, list):
+        return {str(m): True for m in raw}
+    return {
+        "attendance": True,
+        "fee_ledger": True,
+        "ai_exam": True,
+        "live_exam_mcq": False,
+        "batches": False,
+        "notice_board": True,
+        "ai_tutor": True
+    }
 
 
 class WorkspaceCreatePayload(BaseModel):
@@ -31,7 +49,7 @@ class WorkspaceOut(BaseModel):
     workspace_type: str
     code: Optional[str] = ""
     role: str
-    enabled_modules: dict
+    enabled_modules: Dict[str, Any] = Field(default_factory=dict)
 
 class CreateAcademyWorkspacePayload(BaseModel):
     name: str = Field(..., min_length=2, max_length=150, json_schema_extra={"example": "Model Future Academic Care"})
@@ -39,10 +57,11 @@ class CreateAcademyWorkspacePayload(BaseModel):
 
 def get_tenant_school_name(db: Session, tenant_id: str) -> str:
     """Fetches the authentic registered school name for this tenant."""
-    school_profile = db.query(SchoolProfile).filter(SchoolProfile.tenant_id == str(tenant_id)).first()
-    if school_profile and school_profile.school_name:
-        return school_profile.school_name.strip()
+    prof = get_institution_profile(db, tenant_id)
+    if prof and prof.name and prof.name != "Your School":
+        return prof.name.strip()
     return "Institutional School"
+
 
 
 def ensure_default_workspaces(db: Session, tenant_id: str) -> List[Workspace]:
@@ -137,7 +156,7 @@ def get_tenant_workspaces_list(
             workspace_type=ws.workspace_type.value if hasattr(ws.workspace_type, "value") else str(ws.workspace_type),
             code=ws.code or f"WS-{str(ws.id)[:6].upper()}",
             role=current_user.role or "student",
-            enabled_modules=ws.enabled_modules if isinstance(ws.enabled_modules, dict) else {m: True for m in (ws.enabled_modules or [])}
+            enabled_modules=normalize_enabled_modules(ws.enabled_modules)
         )
         for ws in workspaces
     ]
@@ -349,7 +368,7 @@ def get_user_assigned_workspaces(
                         workspace_type=ws.workspace_type.value if hasattr(ws.workspace_type, "value") else str(ws.workspace_type),
                         code=ws.code or f"WS-{str(ws.id)[:6].upper()}",
                         role=m.role,
-                        enabled_modules=ws.enabled_modules or {}
+                        enabled_modules=normalize_enabled_modules(ws.enabled_modules)
                     ))
         if results:
             return results
@@ -368,14 +387,14 @@ def get_user_assigned_workspaces(
                 workspace_type=ws.workspace_type.value if hasattr(ws.workspace_type, "value") else str(ws.workspace_type),
                 code=ws.code or f"WS-{str(ws.id)[:6].upper()}",
                 role=current_user.role or "student",
-                enabled_modules=ws.enabled_modules or {}
+                enabled_modules=normalize_enabled_modules(ws.enabled_modules)
             )
             for ws in workspaces
         ]
 
     # 4. Fallback if new tenant has no workspace row yet
-    school_profile = db.query(SchoolProfile).filter(SchoolProfile.tenant_id == str(tenant_id)).first()
-    inst_name = school_profile.school_name if school_profile else "Institutional Workspace"
+    prof = get_institution_profile(db, tenant_id)
+    inst_name = prof.name if prof and prof.name and prof.name != "Your School" else "Institutional Workspace"
     return [
         WorkspaceOut(
             id=str(tenant_id),

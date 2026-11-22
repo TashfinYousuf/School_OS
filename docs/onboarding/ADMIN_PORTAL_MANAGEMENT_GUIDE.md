@@ -75,3 +75,4 @@ EducationOS enforces zero-trust, multi-tenant identity governance across all edu
 - **Link Student:** একই অভিভাবকের অধীনে অন্য সন্তানকে যুক্ত করা (এক অ্যাকাউন্টে একাধিক ভাই-বোন)।
 - **Unlink:** ভুলক্রমে কোনো শিক্ষার্থী যুক্ত হলে তাকে আনলিংক করা।
 - **Suspend / Reactivate:** অভিভাবকের পোর্টাল সাময়িক বন্ধ বা পুনরায় চালু করা।
+

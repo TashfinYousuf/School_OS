@@ -6661,6 +6661,231 @@
         "title": "PlatformLoginPayload",
         "type": "object"
       },
+      "PortalChildInfo": {
+        "properties": {
+          "admission_number": {
+            "title": "Admission Number",
+            "type": "string"
+          },
+          "class_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": "",
+            "title": "Class Name"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "roll_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": "",
+            "title": "Roll Number"
+          },
+          "student_name": {
+            "title": "Student Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "student_name",
+          "admission_number"
+        ],
+        "title": "PortalChildInfo",
+        "type": "object"
+      },
+      "PortalFeeInvoiceItem": {
+        "properties": {
+          "amount": {
+            "title": "Amount",
+            "type": "number"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "invoice_number": {
+            "title": "Invoice Number",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "invoice_number",
+          "title",
+          "amount",
+          "status"
+        ],
+        "title": "PortalFeeInvoiceItem",
+        "type": "object"
+      },
+      "PortalFeePaymentItem": {
+        "properties": {
+          "amount_paid": {
+            "title": "Amount Paid",
+            "type": "number"
+          },
+          "billing_month": {
+            "title": "Billing Month",
+            "type": "string"
+          },
+          "fee_type": {
+            "title": "Fee Type",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "payment_date": {
+            "title": "Payment Date",
+            "type": "string"
+          },
+          "payment_method": {
+            "title": "Payment Method",
+            "type": "string"
+          },
+          "receipt_no": {
+            "title": "Receipt No",
+            "type": "string"
+          },
+          "student_name": {
+            "title": "Student Name",
+            "type": "string"
+          },
+          "transaction_id": {
+            "title": "Transaction Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "receipt_no",
+          "student_name",
+          "fee_type",
+          "billing_month",
+          "amount_paid",
+          "payment_method",
+          "transaction_id",
+          "payment_date"
+        ],
+        "title": "PortalFeePaymentItem",
+        "type": "object"
+      },
+      "PortalFeeSummaryResponse": {
+        "properties": {
+          "children": {
+            "items": {
+              "$ref": "#/components/schemas/PortalChildInfo"
+            },
+            "title": "Children",
+            "type": "array"
+          },
+          "currency": {
+            "default": "BDT",
+            "title": "Currency",
+            "type": "string"
+          },
+          "invoices": {
+            "items": {
+              "$ref": "#/components/schemas/PortalFeeInvoiceItem"
+            },
+            "title": "Invoices",
+            "type": "array"
+          },
+          "payments": {
+            "items": {
+              "$ref": "#/components/schemas/PortalFeePaymentItem"
+            },
+            "title": "Payments",
+            "type": "array"
+          },
+          "student": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PortalStudentInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "total_due": {
+            "default": 0.0,
+            "title": "Total Due",
+            "type": "number"
+          },
+          "total_paid": {
+            "default": 0.0,
+            "title": "Total Paid",
+            "type": "number"
+          }
+        },
+        "title": "PortalFeeSummaryResponse",
+        "type": "object"
+      },
+      "PortalStudentInfo": {
+        "properties": {
+          "admission_number": {
+            "title": "Admission Number",
+            "type": "string"
+          },
+          "class_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": "",
+            "title": "Class Name"
+          },
+          "first_name": {
+            "title": "First Name",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "last_name": {
+            "title": "Last Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "first_name",
+          "last_name",
+          "admission_number"
+        ],
+        "title": "PortalStudentInfo",
+        "type": "object"
+      },
       "PracticeBatchSubmitPayload": {
         "properties": {
           "answers": {
@@ -10289,7 +10514,6 @@
       "UserCreate": {
         "properties": {
           "email": {
-            "format": "email",
             "title": "User's email address",
             "type": "string"
           },
@@ -10371,9 +10595,19 @@
             "type": "string"
           },
           "email": {
-            "format": "email",
             "title": "User's email address",
             "type": "string"
+          },
+          "first_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Name"
           },
           "id": {
             "format": "uuid",
@@ -10384,6 +10618,28 @@
             "default": true,
             "title": "Is Active",
             "type": "boolean"
+          },
+          "last_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Name"
+          },
+          "phone_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone Number"
           },
           "role": {
             "anyOf": [
@@ -10401,6 +10657,17 @@
             "format": "uuid",
             "title": "Tenant Id",
             "type": "string"
+          },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username"
           }
         },
         "required": [
@@ -10592,8 +10859,7 @@
           "id",
           "name",
           "workspace_type",
-          "role",
-          "enabled_modules"
+          "role"
         ],
         "title": "WorkspaceOut",
         "type": "object"
@@ -21423,6 +21689,78 @@
           }
         ],
         "summary": "Get Finance Ledger",
+        "tags": [
+          "Finance & Fee Ledger"
+        ]
+      }
+    },
+    "/api/v1/finance/portal/fee-summary": {
+      "get": {
+        "description": "Dedicated read-only fee and money receipt overview for Guardians and Students.\nStrictly verifies Guardian-to-Child links to eliminate horizontal BOLA/IDOR leakage.\nProvides sibling switching list for multi-child households.",
+        "operationId": "get_portal_fee_summary_api_v1_finance_portal_fee_summary_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "student_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Student Id"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Tenant-ID",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Tenant-Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PortalFeeSummaryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OAuth2PasswordBearer": []
+          }
+        ],
+        "summary": "Get Portal Fee Summary",
         "tags": [
           "Finance & Fee Ledger"
         ]

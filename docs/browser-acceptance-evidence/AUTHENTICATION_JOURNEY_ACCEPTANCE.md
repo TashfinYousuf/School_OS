@@ -135,3 +135,4 @@ sequenceDiagram
 | Invitation Status Inspection | `GET /api/v1/auth/invitation-status` | Token Audit | 200 OK | **VERIFIED** |
 | Token Activation | `POST /api/v1/auth/activate` | Cryptographic SHA-256 | 200 OK | **VERIFIED** |
 | BOLA Protection Guard | `GET /api/v1/students/{sid}/profile-360` | Cross-Family Access | 403 Forbidden | **VERIFIED** |
+

@@ -294,6 +294,29 @@ export const DICTIONARY: Record<string, TranslationEntry> = {
   "notices.audienceTeachers": { en: "Faculty & Staff", bn: "শুধুমাত্র শিক্ষক" },
   "notices.audienceStudents": { en: "Students Only", bn: "শুধুমাত্র শিক্ষার্থী" },
   "notices.printPad": { en: "Print Notice Pad (A4)", bn: "নোটিশ প্যাড প্রিন্ট (A4)" },
+
+  // Guardian & Student Portal
+  "portal.guardianTitle": { en: "Guardian Portal & Ward Overview", bn: "অভিভাবক পোর্টাল ও সন্তানের তথ্য" },
+  "portal.studentTitle": { en: "Student Academic & Fee Portal", bn: "শিক্ষার্থী একাডেমিক ও ফি পোর্টাল" },
+  "portal.feeSummary": { en: "Fee Statement & Receipts", bn: "ফি বিবরণী ও রসিদ" },
+  "portal.totalPaid": { en: "Total Fees Paid", bn: "মোট পরিশোধিত ফি" },
+  "portal.totalDue": { en: "Outstanding Dues", bn: "বর্তমান মোট বকেয়া" },
+  "portal.noReceipts": { en: "No money receipts on record yet.", bn: "এখনও কোনো মানি রিসিট নেই।" },
+  "portal.noChildren": { en: "No verified children linked yet.", bn: "এখনও কোনো সন্তান লিঙ্ক করা হয়নি।" },
+  "portal.selectChild": { en: "Select Child", bn: "সন্তান নির্বাচন করুন" },
+  "portal.cleared": { en: "Cleared", bn: "পরিশোধিত" },
+  "portal.unpaid": { en: "Unpaid", bn: "অপরিশোধিত" },
+
+  // IAM & Portal Onboarding Management
+  "iam.title": { en: "Portal Access & Identity Management", bn: "পোর্টাল এক্সেস ও ক্রেডেনশিয়াল ব্যবস্থাপনা" },
+  "iam.generateInvite": { en: "Generate Activation Link", bn: "এক্টিভেশন লিংক তৈরি করুন" },
+  "iam.resetPassword": { en: "Reset Portal Credentials", bn: "পাসওয়ার্ড রিসেট করুন" },
+  "iam.studentUid": { en: "Student Admission UID", bn: "শিক্ষার্থী ভর্তি আইডি" },
+  "iam.guardianPhone": { en: "Guardian Mobile Number", bn: "অভিভাবকের মোবাইল নম্বর" },
+  "iam.invitationCopied": { en: "Activation link copied to clipboard", bn: "এক্টিভেশন লিংক ক্লিপবোর্ডে কপি হয়েছে" },
+  "iam.credentialStatus": { en: "Credential Status", bn: "একাউন্ট স্থিতি" },
+  "iam.activated": { en: "Activated", bn: "সক্রিয়" },
+  "iam.pendingActivation": { en: "Pending Setup", bn: "সেটআপ বাকি" },
 };
 
 export function resolveTranslation(key: string, language: Language): string {

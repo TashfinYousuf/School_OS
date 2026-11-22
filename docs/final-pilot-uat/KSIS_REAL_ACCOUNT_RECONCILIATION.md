@@ -94,3 +94,4 @@ If an invitation is sent to an incorrect phone number or person:
 2. This immediately marks `is_consumed = True` on all pending tokens and sets `is_active = False` on the user account.
 3. All active JWT sessions for that user are revoked in the token blacklist.
 4. The administrator corrects the contact details and clicks **"Reissue Link"** to send a fresh invitation to the correct family.
+

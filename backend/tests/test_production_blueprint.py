@@ -17,7 +17,7 @@ from sqlalchemy import func
 from app.main import app
 from app.core.database import SessionLocal
 from app.core.security import create_access_token, get_password_hash
-from app.models.tenant import User
+from app.models.tenant import Tenant, User
 from app.models.student import Student
 from app.models.attendance import AttendanceEvent
 from app.models.live_exam import LiveExam
@@ -66,18 +66,47 @@ def teacher_token():
     })
 
 
-def test_dashboard_daily_attendance_zero_honesty(admin_token):
+def test_dashboard_daily_attendance_zero_honesty():
     """
     Verifies that if yesterday had attendance submitted, but today NO attendance has been taken,
     the dashboard metrics endpoint strictly returns present_today=0 and absent_today=0.
     Ensures the old buggy fallback to previous days is completely eradicated.
+    Uses an isolated tenant to guarantee no pre-existing same-day records interfere.
     """
     db = SessionLocal()
+    isolated_tid = uuid.uuid4()
+    isolated_tid_str = str(isolated_tid)
     adm_num = f"ADM-TEST-{uuid.uuid4().hex[:6]}"
+    admin_id = uuid.uuid4()
+
     try:
+        tenant = Tenant(
+            id=isolated_tid,
+            school_name="Zero Honesty Verification Academy",
+            domain=f"zero-{isolated_tid.hex[:6]}.edu.bd",
+            address="Dhaka, Bangladesh"
+        )
+        admin_user = User(
+            id=admin_id,
+            email=f"admin_zero_{admin_id.hex[:6]}@school.com",
+            password_hash=get_password_hash("AdminPass@123"),
+            tenant_id=isolated_tid,
+            role="admin",
+            is_active=True
+        )
+        db.add_all([tenant, admin_user])
+        db.commit()
+
+        token = create_access_token({
+            "sub": str(admin_id),
+            "user_id": str(admin_id),
+            "tenant_id": isolated_tid_str,
+            "role": "admin"
+        })
+
         # Create student for this tenant
         student = Student(
-            tenant_id=TENANT_TEST,
+            tenant_id=isolated_tid,
             first_name="Rahim",
             last_name="Uddin",
             admission_number=adm_num,
@@ -91,7 +120,7 @@ def test_dashboard_daily_attendance_zero_honesty(admin_token):
         # Insert historical attendance for YESTERDAY
         yesterday = datetime.datetime.now(BD_TZ).date() - datetime.timedelta(days=1)
         old_att = AttendanceEvent(
-            tenant_id=TENANT_TEST,
+            tenant_id=isolated_tid_str,
             student_id=student.id,
             date=yesterday,
             status="Present",
@@ -103,7 +132,7 @@ def test_dashboard_daily_attendance_zero_honesty(admin_token):
         # Call GET /api/v1/dashboard/metrics
         res = client.get(
             "/api/v1/dashboard/metrics",
-            headers={"Authorization": f"Bearer {admin_token}"}
+            headers={"Authorization": f"Bearer {token}", "X-Tenant-ID": isolated_tid_str}
         )
         assert res.status_code == 200, res.text
         data = res.json()
@@ -113,11 +142,17 @@ def test_dashboard_daily_attendance_zero_honesty(admin_token):
         assert data["absent_today"] == 0, f"Expected 0 absent today, got {data['absent_today']}"
         assert data["total_students"] >= 1
     finally:
-        db.rollback()
-        db.query(AttendanceEvent).filter(AttendanceEvent.tenant_id == TENANT_TEST, AttendanceEvent.idempotency_key.like("att-%")).delete()
-        db.query(Student).filter(Student.tenant_id == TENANT_TEST, Student.admission_number == adm_num).delete()
-        db.commit()
-        db.close()
+        try:
+            db.rollback()
+            db.query(AttendanceEvent).filter(AttendanceEvent.tenant_id == isolated_tid_str).delete(synchronize_session=False)
+            db.query(Student).filter(Student.tenant_id == isolated_tid).delete(synchronize_session=False)
+            db.query(User).filter(User.id == admin_id).delete(synchronize_session=False)
+            db.query(Tenant).filter(Tenant.id == isolated_tid).delete(synchronize_session=False)
+            db.commit()
+        except Exception:
+            db.rollback()
+        finally:
+            db.close()
 
 
 def test_operational_kpi_cumulative_efficiency_engine(admin_token):

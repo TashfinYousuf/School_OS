@@ -251,3 +251,4 @@ curl -f -I https://app.educationos.com/login
 - [x] Nightly off-site backup cron scheduled with 14-day retention.
 - [x] BOLA / IDOR protection verified across student/guardian relationships.
 - [x] Zero-downtime rolling restart commands verified.
+

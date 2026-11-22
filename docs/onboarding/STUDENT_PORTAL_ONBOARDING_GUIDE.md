@@ -136,3 +136,4 @@ Students do not register themselves. For security and child safety, **every stud
   কোনো কারণে অ্যাকাউন্ট বন্ধ রাখতে চাইলে **"Suspend"** বাটনে ক্লিক করুন। তাৎক্ষণিকভাবে লগইন বন্ধ হয়ে যাবে।
 - **পুনরায় চালু করা:**  
   স্থগিত অ্যাকাউন্ট পুনরায় চালু করতে **"Reactivate"** বাটনে ক্লিক করুন।
+

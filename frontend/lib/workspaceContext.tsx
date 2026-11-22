@@ -42,8 +42,8 @@ export const WorkspaceContext = createContext<WorkspaceContextType>({
 export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const [currentWorkspace, setCurrentWorkspace] = useState<WorkspaceInfo>(() => {
     const storedSchoolName = typeof window !== "undefined" 
-      ? localStorage.getItem("school_name") || localStorage.getItem("institution_name") || "Your School"
-      : "Your School";
+      ? localStorage.getItem("school_name") || localStorage.getItem("institution_name") || "School"
+      : "School";
     const storedOrgId = typeof window !== "undefined"
       ? localStorage.getItem("active_workspace_id") || "active-tenant"
       : "active-tenant";
@@ -87,6 +87,9 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
         const storedActiveId = typeof window !== "undefined" ? localStorage.getItem("active_workspace_id") : null;
         const matched = mappedWorkspaces.find((w) => w.orgId === storedActiveId) || mappedWorkspaces[0];
         setCurrentWorkspace(matched);
+        if (matched.name && typeof window !== "undefined") {
+          localStorage.setItem("school_name", matched.name);
+        }
       }
     } catch {
       // Retain stored fallback state
