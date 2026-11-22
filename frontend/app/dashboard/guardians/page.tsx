@@ -6,6 +6,9 @@ import {
   Users, Phone, MessageSquare, Search, 
   Send, ExternalLink, Loader2, Sparkles, X 
 } from "lucide-react";
+import { useInstitution } from "@/lib/institution";
+import { fetchWithTenant } from "@/lib/api-client";
+import { useAcademicClasses } from "@/lib/useAcademicClasses";
 
 interface GuardianItem {
   id: string;
@@ -20,6 +23,7 @@ interface GuardianItem {
 
 export default function GuardianDirectoryPage() {
   const { language } = useLanguage();
+  const { name } = useInstitution();
   const [guardians, setGuardians] = useState<GuardianItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -30,19 +34,16 @@ export default function GuardianDirectoryPage() {
   const [messageType, setMessageType] = useState<"absent" | "fee" | "meeting" | "custom">("absent");
   const [customMsg, setCustomMsg] = useState("");
 
-  const classes = ["Play", "Nursery", "KG", "Class 1", "Class 2", "Class 3", "Class 4", "Class 5"];
+  const { classNames: classes } = useAcademicClasses();
 
   const fetchDirectory = async () => {
     setLoading(true);
     try {
-      const token = localStorage.getItem("token");
-      let url = `http://127.0.0.1:8000/api/v1/guardians/directory?`;
+      let url = `/api/v1/guardians/directory?`;
       if (selectedClass) url += `class_name=${encodeURIComponent(selectedClass)}&`;
       if (search) url += `search=${encodeURIComponent(search)}&`;
 
-      const res = await fetch(url, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const res = await fetchWithTenant(url);
       if (res.ok) {
         setGuardians(await res.json());
       }
@@ -52,7 +53,9 @@ export default function GuardianDirectoryPage() {
   };
 
   useEffect(() => {
-    fetchDirectory();
+    queueMicrotask(() => {
+      void fetchDirectory();
+    });
   }, [selectedClass, search]);
 
   const getTemplateText = () => {
@@ -60,13 +63,14 @@ export default function GuardianDirectoryPage() {
     const name = selectedGuardian.student_name;
     const cls = selectedGuardian.class_name;
     
+    const schoolDisplay = name || "School Administration";
     switch (messageType) {
       case "absent":
-        return `আসসালামু আলাইকুম। সম্মানিত অভিভাবক, আপনার সন্তান ${name} (শ্রেণি: ${cls}, আইডি: ${selectedGuardian.admission_number}) আজ বিদ্যালয়ে উপস্থিত নেই। কোনো জরুরি সমস্যা থাকলে বিদ্যালয় কর্তৃপক্ষকে অবহিত করার জন্য অনুরোধ করা হলো। - কিডস শাইন ইন্টারন্যাশনাল স্কুল`;
+        return `আসসালামু আলাইকুম। সম্মানিত অভিভাবক, আপনার সন্তান ${name} (শ্রেণি: ${cls}, আইডি: ${selectedGuardian.admission_number}) আজ বিদ্যালয়ে উপস্থিত নেই। কোনো জরুরি সমস্যা থাকলে বিদ্যালয় কর্তৃপক্ষকে অবহিত করার জন্য অনুরোধ করা হলো। - ${schoolDisplay}`;
       case "fee":
-        return `আসসালামু আলাইকুম। সম্মানিত অভিভাবক, ${name}-এর চলতি মাসের টিউশন ফি বকেয়া রয়েছে। নির্ধারিত সময়ের মধ্যে ফি পরিশোধ করার জন্য বিনীত অনুরোধ জানাচ্ছি। - কিডস শাইন ইন্টারন্যাশনাল স্কুল`;
+        return `আসসালামু আলাইকুম। সম্মানিত অভিভাবক, ${name}-এর চলতি মাসের টিউশন ফি বকেয়া রয়েছে। নির্ধারিত সময়ের মধ্যে ফি পরিশোধ করার জন্য বিনীত অনুরোধ জানাচ্ছি। - ${schoolDisplay}`;
       case "meeting":
-        return `আসসালামু আলাইকুম। সম্মানিত অভিভাবক, আগামী বৃহস্পতিবার বিদ্যালয়ে অভিভাবক সমাবেশ অনুষ্ঠিত হবে। আপনার উপস্থিতি একান্ত কাম্য। - কিডস শাইন ইন্টারন্যাশনাল স্কুল`;
+        return `আসসালামু আলাইকুম। সম্মানিত অভিভাবক, আগামী বৃহস্পতিবার বিদ্যালয়ে অভিভাবক সমাবেশ অনুষ্ঠিত হবে। আপনার উপস্থিতি একান্ত কাম্য। - ${schoolDisplay}`;
       case "custom":
         return customMsg;
     }
@@ -93,7 +97,7 @@ export default function GuardianDirectoryPage() {
             {language === "EN" ? "Guardian Directory & WhatsApp Hub" : "অভিভাবক ফোনবুক ও মেসেজিং হাব"}
           </h1>
           <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
-            Kids Shine International School • 1-Click WhatsApp messaging for absence, fees, and updates.
+            {name} • 1-Click WhatsApp messaging for absence, fees, and updates.
           </p>
         </div>
       </div>
@@ -208,7 +212,7 @@ export default function GuardianDirectoryPage() {
                 ].map((t) => (
                   <button
                     key={t.id}
-                    onClick={() => setMessageType(t.id as any)}
+                    onClick={() => setMessageType(t.id as "absent" | "fee" | "meeting" | "custom")}
                     className={`py-2 px-3 rounded-xl text-xs font-semibold border transition-all text-left ${
                       messageType === t.id
                         ? "bg-green-50 dark:bg-green-500/10 border-green-600 text-green-700 dark:text-green-400 font-bold"

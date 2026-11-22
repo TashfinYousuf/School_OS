@@ -52,13 +52,9 @@ def test_student_forbidden_from_teacher_voice_diary(student_token):
 
 
 def test_student_permitted_on_socratic_learning_studio(student_token):
-    """Students must have full access to Socratic Doubt Solver."""
-    with patch("app.api.endpoints.learning_studio.ai_client") as mock_ai:
-        mock_chat = MagicMock()
-        mock_response = MagicMock()
-        mock_response.text = "Hint: Factor out 2x from the first two terms."
-        mock_chat.send_message.return_value = mock_response
-        mock_ai.chats.create.return_value = mock_chat
+    """Students must have full access to Socratic Doubt Solver via MultiModelAIGateway."""
+    with patch("app.api.endpoints.learning_studio.ai_gateway.execute_with_failover") as mock_gw:
+        mock_gw.return_value = ("Hint: Factor out 2x from the first two terms.", "gemini")
 
         payload = {
             "student_name": "Talha Hussain",
@@ -124,12 +120,8 @@ def test_socratic_tutor_rejects_direct_answers():
     """Confirms that the system prompt restricts the model from returning blunt final numbers."""
     from app.api.endpoints.learning_studio import DoubtQuery, socratic_doubt_solver
 
-    with patch("app.api.endpoints.learning_studio.ai_client") as mock_ai:
-        mock_chat = MagicMock()
-        mock_response = MagicMock()
-        mock_response.text = "Step 1: Notice that 2 * 2 = 4, and (-4) + (-1) = -5. Can you rewrite the middle term?"
-        mock_chat.send_message.return_value = mock_response
-        mock_ai.chats.create.return_value = mock_chat
+    with patch("app.api.endpoints.learning_studio.ai_gateway.execute_with_failover") as mock_gw:
+        mock_gw.return_value = ("Step 1: Notice that 2 * 2 = 4, and (-4) + (-1) = -5. Can you rewrite the middle term?", "gemini")
 
         query = DoubtQuery(
             student_name="Zayan Ahmed",

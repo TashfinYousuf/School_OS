@@ -1,12 +1,60 @@
 # backend/app/schemas/finance.py
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.models.finance import PaymentMethod, PaymentStatus
+from app.models.finance import PaymentMethod, PaymentStatus, InvoiceStatus
+
+
+class InvoiceLineItemCreate(BaseModel):
+    description: str = Field(..., min_length=2, max_length=255)
+    amount: Decimal = Field(..., gt=0, decimal_places=2)
+    quantity: int = Field(default=1, ge=1)
+    unit_price: Optional[Decimal] = Field(None, decimal_places=2)
+
+
+class InvoiceLineItemResponse(BaseModel):
+    id: UUID
+    invoice_id: UUID
+    description: str
+    quantity: int
+    unit_price: Decimal
+    amount: Decimal
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class InvoiceCreate(BaseModel):
+    student_id: UUID
+    billing_month: str = Field(..., min_length=2, max_length=50)
+    title: Optional[str] = Field("Monthly Tuition Invoice", max_length=150)
+    due_date: Optional[datetime] = None
+    discount_amount: Optional[Decimal] = Field(default=Decimal("0.00"), ge=0, decimal_places=2)
+    currency: Optional[str] = Field(default="BDT", max_length=3)
+    items: List[InvoiceLineItemCreate] = Field(..., min_length=1)
+
+
+class InvoiceResponse(BaseModel):
+    id: UUID
+    tenant_id: str
+    student_id: str
+    invoice_number: str
+    title: str
+    billing_month: str
+    total_amount: Decimal
+    paid_amount: Decimal
+    discount_amount: Decimal
+    currency: str
+    status: str
+    due_date: Optional[datetime]
+    issued_at: datetime
+    created_at: datetime
+    items: List[InvoiceLineItemResponse] = Field(default_factory=list)
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class FeePaymentCreate(BaseModel):

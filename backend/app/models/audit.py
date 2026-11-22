@@ -6,7 +6,7 @@ from app.models.base import Base
 
 class AuditLog(Base):
     """
-    Central Event Bus/Memory for SchoolOS.
+    Central Event Bus/Memory for EducationOS.
     Stores every action for AI Context and System Auditing.
     """
     __tablename__ = "audit_logs"

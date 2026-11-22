@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Mic, MicOff, Loader2, Sparkles, CheckCircle2, X } from "lucide-react";
+import { fetchWithTenant } from "@/lib/api-client";
 
 export default function VoiceLessonModal({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
   const [recording, setRecording] = useState(false);
@@ -23,13 +24,8 @@ export default function VoiceLessonModal({ isOpen, onClose }: { isOpen: boolean;
     if (!transcription) return;
     setSubmitting(true);
     try {
-      const token = localStorage.getItem("token");
-      const res = await fetch("http://127.0.0.1:8000/api/v1/teacher-os/voice-diary-sync", {
+      const res = await fetchWithTenant("/api/v1/teacher-os/voice-diary-sync", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`
-        },
         body: JSON.stringify({
           class_name: "Class 5",
           subject: "Mathematics",

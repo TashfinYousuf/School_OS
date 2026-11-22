@@ -1,0 +1,14 @@
+{
+  "mfa_secrets": {},
+  "webauthn_credentials": {
+    "dc9beb60-e6ce-47e2-aa89-7a2153ebf2fe": [
+      {
+        "id": "cred-sample-pubkey-id-12345",
+        "rawId": "cred-sample-pubkey-id-12345",
+        "type": "public-key",
+        "registered_at": "2026-11-17T13:25:13.366597+00:00",
+        "user_id": "dc9beb60-e6ce-47e2-aa89-7a2153ebf2fe"
+      }
+    ]
+  }
+}

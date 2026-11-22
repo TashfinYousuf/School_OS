@@ -12,16 +12,17 @@ from pydantic import BaseModel, Field, model_validator
 from google import genai
 from google.genai import types
 
-from app.core.database import get_db
 from app.core.config import settings
-from app.api.deps import get_current_tenant_id, require_roles
+from app.api.deps import get_db, get_current_tenant_id, require_roles
 from app.models.live_exam import LiveExam
 from app.services.ai_gateway import ai_gateway, AIGenerationError
+from app.services.institution import get_institution_profile
 from dotenv import load_dotenv, find_dotenv
 
 router = APIRouter()
 
 logger = logging.getLogger(__name__)
+
 load_dotenv(find_dotenv(), override=True)
 
 raw_api_key = (
@@ -36,16 +37,16 @@ ai_client = genai.Client(api_key=clean_api_key) if clean_api_key and len(clean_a
 
 
 class GenerateQuestionPaperPayload(BaseModel):
-    subject: str = Field(..., example="Physics 1st Paper")
+    subject: str = Field(..., min_length=2, max_length=80, pattern=r"^[\w\s.,:()&/'’\-\u0980-\u09FF]+$")
     class_name: Optional[str] = None
     program_name: Optional[str] = None
-    topic: Optional[str] = None
+    topic: Optional[str] = Field(None, max_length=120, pattern=r"^[\w\s.,:()&/'’\-\u0980-\u09FF]+$")
     topic_title: Optional[str] = None
-    question_count: Optional[int] = 5
+    question_count: Optional[int] = Field(5, ge=2, le=50)
     total_marks: Optional[float] = 25.0
-    duration_minutes: Optional[int] = 15
-    difficulty: Optional[str] = "Engineering / Medical Standard"
-    negative_marking_rate: Optional[float] = 0.25
+    duration_minutes: Optional[int] = Field(15, ge=1, le=180)
+    difficulty: Optional[str] = Field("Medium", pattern=r"^(Easy|Medium|Hard)$")
+    negative_marking_rate: Optional[float] = Field(0.25, ge=0.0, le=1.0)
 
     @model_validator(mode="after")
     def reconcile_fields(self):
@@ -53,7 +54,7 @@ class GenerateQuestionPaperPayload(BaseModel):
         self.topic = resolved_topic
         self.topic_title = resolved_topic
 
-        resolved_class = self.class_name or self.program_name or "Academic Care (Udvash / Retina Model)"
+        resolved_class = self.class_name or self.program_name or "General"
         self.class_name = resolved_class
         self.program_name = resolved_class
 
@@ -106,6 +107,8 @@ def list_question_papers(
             "duration_minutes": p.duration_minutes,
             "negative_marking_rate": p.negative_marking_rate,
             "total_questions": len(q_list),
+            "is_published": bool(p.is_published),
+            "status": "Published" if p.is_published else "Draft / Review Required",
             "created_at": p.created_at.strftime("%d %b, %Y • %I:%M %p") if p.created_at else "Recent",
             "sample_question": q_list[0].get("question") if q_list else "No questions in draft."
         })
@@ -135,77 +138,54 @@ def get_single_question_paper(
         except Exception:
             q_list = []
 
+    inst = get_institution_profile(db, tenant_id)
+    campus_address = " • ".join(
+        p for p in (inst.address, f"Phone: {inst.phone}" if inst.phone else None) if p
+    )
+
     return {
         "id": str(paper.id),
         "title": paper.title,
         "total_marks": paper.total_marks,
         "duration_minutes": paper.duration_minutes,
         "negative_marking_rate": paper.negative_marking_rate,
-        "institution_name": "Kids Shine International School & Academic Care",
-        "campus_address": "Nazrul Avenue, Kandirpar, Cumilla-3500 • Phone: +8801971122084",
+        "institution_name": inst.name,
+        "campus_address": campus_address,
         "created_at": paper.created_at.strftime("%d %b, %Y") if paper.created_at else "Today",
         "questions": q_list
     }
 
-# Subject-Specific Verified Question Bank for Fail-Safe Dynamic Fallbacks
-SUBJECT_FALLBACK_POOLS = {
-    "chemistry": [
-        {
-            "question": "[Organic Chemistry] Aliphatic hydrocarbon theke aromatic compound toirir proyash-e n-hexane ke Cr2O3 probhabok er upasthitite 500°C e uttapto korle ki utponno hoy?",
-            "options": ["Benzene", "Toluene", "Cyclohexane", "Hexene"],
-            "correct_option": "Benzene",
-            "explanation": "Aromatization reaction-e n-hexane ke 500°C o high pressure-e Cr2O3/Al2O3 probhaboker upasthitite dehydrogenation o cyclization-er maddhome Benzene toiri hoy."
-        },
-        {
-            "question": "[Organic Chemistry] Grignard reagent (R-Mg-X) er shathe Formaldehyde (HCHO) er bikriyar por adro-bishleshon (hydrolysis) korle kon alcohol utponno hoy?",
-            "options": ["Primary (1°) Alcohol", "Secondary (2°) Alcohol", "Tertiary (3°) Alcohol", "Ether"],
-            "correct_option": "Primary (1°) Alcohol",
-            "explanation": "Formaldehyde er shathe Grignard reagent bikriya kore shobshomoy 1° alcohol toiri kore; onnanno aldehyde 2° ebong ketone 3° alcohol dey."
-        },
-        {
-            "question": "[Chemistry] Kaolin ba China clay er shothik chemical formula konti?",
-            "options": ["Al2O3·2SiO2·2H2O", "Al2O3·3H2O", "Na3AlF6", "K2O·Al2O3·6SiO2"],
-            "correct_option": "Al2O3·2SiO2·2H2O",
-            "explanation": "China clay ba Kaolinite er standard chemical formula holo Al2Si2O5(OH)4 ba oxide format-e Al2O3·2SiO2·2H2O."
-        },
-        {
-            "question": "[Organic Chemistry] Cannizzaro bikriya nicher kon compound-ti pradarshan kore?",
-            "options": ["Benzaldehyde", "Acetaldehyde", "Acetone", "Propanal"],
-            "correct_option": "Benzaldehyde",
-            "explanation": "Je shob aldehyde-e alpha-hydrogen thake na (e.g., Benzaldehyde, Formaldehyde) tara teebro ksharer upasthitite Cannizzaro bikriya dey."
-        }
-    ],
-    "physics": [
-        {
-            "question": "[Physics • Dynamics] Ekti bostur upor F = (6i - 3j + 2k) N bol proyog koray boson r = (2i + 2j - k) m hoy. Krito kajer poriman koto?",
-            "options": ["4 J", "10 J", "8 J", "12 J"],
-            "correct_option": "4 J",
-            "explanation": "W = F · r = (6*2) + (-3*2) + (2*-1) = 12 - 6 - 2 = 4 Joule."
-        },
-        {
-            "question": "[Physics] Vrittakar pothe shushomo drutite ghurnayoman bostur khetre konti shothik?",
-            "options": ["Toron kendramukhi", "Toron shunya", "Beg dhrubok", "Gotishokti poribortito hoy"],
-            "correct_option": "Toron kendramukhi",
-            "explanation": "Sushomo drutite cholleo beger dik poribortoner karone shobshomoy kendramukhi toron a = v^2/r thake."
-        }
-    ],
-    "math": [
-        {
-            "question": "[Higher Math] 2x² - 5x + 2 = 0 shomikoroner muldoy er shobhab konti?",
-            "options": ["Bastob o oshoman", "Bastob o shoman", "Jotil o oshoman", "O-bastob"],
-            "correct_option": "Bastob o oshoman",
-            "explanation": "Nishchayok D = b² - 4ac = (-5)² - 4(2)(2) = 25 - 16 = 9 > 0 (purno borgo), tai muldoy bastob, oshoman o mulod."
-        }
-    ],
-    "biology": [
-        {
-            "question": "[Biology] Kosh bクロンg-er kon porjaye bishubiyo onchole chromosome-gulo shojjito hoy?",
-            "options": ["Metaphase", "Prophase", "Anaphase", "Telophase"],
-            "correct_option": "Metaphase",
-            "explanation": "Metaphase dhape equatorial plate ba bishubiyo onchole chromosome shojjito hoy jake metakinesis bole."
-        }
-    ]
-}
+# 3. Approve and Publish Question Paper Draft
+@router.post("/{paper_id}/approve", dependencies=[Depends(require_roles(["admin", "teacher"]))])
+def approve_and_publish_question_paper(
+    paper_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_current_tenant_id)
+):
+    """
+    Teacher / Admin Review Sign-Off: Transitions draft AI blueprint to approved live exam.
+    Enforces human-in-the-loop validation prior to student exposure.
+    """
+    paper = db.query(LiveExam).filter(
+        LiveExam.id == paper_id,
+        LiveExam.tenant_id == str(tenant_id)
+    ).first()
+
+    if not paper:
+        raise HTTPException(status_code=404, detail="Question paper draft not found.")
+
+    paper.is_published = True
+    db.commit()
+    db.refresh(paper)
+
+    return {
+        "status": "APPROVED_AND_PUBLISHED",
+        "paper_id": str(paper.id),
+        "title": paper.title,
+        "is_published": True,
+        "message": "Question paper successfully approved by educator and published to live exam stream."
+    }
+
 
 @router.post("/generate", status_code=status.HTTP_201_CREATED, dependencies=[Depends(require_roles(["admin", "teacher"]))])
 def generate_question_paper_endpoint(
@@ -250,7 +230,7 @@ def generate_question_paper_endpoint(
         negative_marking_rate=payload.negative_marking_rate or 0.25,
         start_time=now,
         end_time=now + datetime.timedelta(days=14),
-        is_published=True,
+        is_published=False,  # Held for review to prevent unverified AI content going live (F6)
         questions_payload=questions
     )
     db.add(new_exam)

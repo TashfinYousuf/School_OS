@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { ShieldCheck, FileCheck, AlertTriangle, Building2, UploadCloud, Loader2, Sparkles } from "lucide-react";
 import { useLanguage } from "@/components/providers";
+import { fetchWithTenant } from "@/lib/api-client";
 
 export default function GovernmentCopilotPage() {
   const { language } = useLanguage();
@@ -13,10 +14,7 @@ export default function GovernmentCopilotPage() {
   useEffect(() => {
     const fetchData = async () => {
       try {
-        const token = localStorage.getItem("token");
-        const res = await fetch("http://127.0.0.1:8000/api/v1/government/ipemis/readiness", {
-          headers: { Authorization: `Bearer ${token}` }
-        });
+        const res = await fetchWithTenant("/api/v1/government/ipemis/readiness");
         if (res.ok) setData(await res.json());
       } finally {
         setLoading(false);

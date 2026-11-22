@@ -1,12 +1,11 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 import datetime
 
 from app.models.audit import AuditLog
-from app.core.database import get_db
-from app.api.deps import get_current_tenant_id
+from app.api.deps import get_db, get_current_tenant_id
 
 router = APIRouter()
 
@@ -25,8 +24,7 @@ class AuditResponse(BaseModel):
     target_entity: str
     risk_level: str
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 @router.post("/", response_model=AuditResponse)
 def log_event(
@@ -35,7 +33,7 @@ def log_event(
     tenant_id: str = Depends(get_current_tenant_id)
 ):
     """
-    Core Event Bus: Records every action happening in SchoolOS.
+    Core Event Bus: Records every action happening in EducationOS.
     """
     new_log = AuditLog(
         tenant_id=tenant_id,

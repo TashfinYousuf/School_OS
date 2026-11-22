@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useLanguage } from "@/components/providers";
-import { safeFetch } from "@/lib/apiClient";
+import { safeFetch, fetchWithTenant } from "@/lib/api-client";
 import { 
   Trophy, Clock, CheckCircle2, XCircle, AlertTriangle, 
   HelpCircle, Send, Loader2, Award, ArrowLeft, Sparkles,
@@ -44,6 +44,14 @@ export default function LiveExamsPage() {
   const [examList, setExamList] = useState<ExamMeta[]>([]);
   const [activeExam, setActiveExam] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
+  const [userRole, setUserRole] = useState<string>("student");
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const role = (localStorage.getItem("user_role") || "student").toLowerCase();
+      setUserRole(role);
+    }
+  }, []);
 
   // In-Page AI Exam Generator Modal
   const [showGenerateModal, setShowGenerateModal] = useState(false);
@@ -77,10 +85,7 @@ export default function LiveExamsPage() {
   const fetchAvailableExams = async () => {
     setLoading(true);
     try {
-      const token = localStorage.getItem("token");
-      const { data } = await safeFetch<ExamMeta[]>("http://127.0.0.1:8000/api/v1/academy/exams", {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const { data } = await safeFetch<ExamMeta[]>("/api/v1/academy/exams");
       if (data) setExamList(data);
     } catch (err) {
       console.error(err);
@@ -109,10 +114,8 @@ export default function LiveExamsPage() {
     e.preventDefault();
     setGeneratingExam(true);
     try {
-      const token = localStorage.getItem("token");
-      const res = await fetch("http://127.0.0.1:8000/api/v1/question-papers/generate", {
+      const res = await fetchWithTenant("/api/v1/question-papers/generate", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           subject: genSubject,
           topic: genTopic,
@@ -140,10 +143,7 @@ export default function LiveExamsPage() {
   const handleStartExam = async (examId: string) => {
     setLoading(true);
     try {
-      const token = localStorage.getItem("token");
-      const res = await fetch(`http://127.0.0.1:8000/api/v1/academy/exams/${examId}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const res = await fetchWithTenant(`/api/v1/academy/exams/${examId}`);
       if (res.ok) {
         const data = await res.json();
         setActiveExam(data);
@@ -166,10 +166,8 @@ export default function LiveExamsPage() {
     if (!confirm(language === "EN" ? "Are you sure you want to delete this live exam?" : "আপনি কি নিশ্চিতভাবে এই লাইভ পরীক্ষাটি মুছে ফেলতে চান?")) return;
 
     try {
-      const token = localStorage.getItem("token");
-      const res = await fetch(`http://127.0.0.1:8000/api/v1/academy/exams/${examId}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` }
+      const res = await fetchWithTenant(`/api/v1/academy/exams/${examId}`, {
+        method: "DELETE"
       });
       if (res.ok) {
         fetchAvailableExams();
@@ -193,12 +191,10 @@ export default function LiveExamsPage() {
     if (!activeExam) return;
     setSubmitting(true);
     try {
-      const token = localStorage.getItem("token");
       const studentId = localStorage.getItem("user_id") || "48b63bba-313a-488c-85a3-5baa1b6bb193";
 
-      const res = await fetch("http://127.0.0.1:8000/api/v1/academy/submit-exam", {
+      const res = await fetchWithTenant("/api/v1/academy/submit-exam", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           exam_id: activeExam.id,
           student_id: studentId,
@@ -220,10 +216,7 @@ export default function LiveExamsPage() {
     setLoadingLeaderboard(true);
     setShowLeaderboardModal(true);
     try {
-      const token = localStorage.getItem("token");
-      const res = await fetch(`http://127.0.0.1:8000/api/v1/academy/exams/${examId}/leaderboard`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const res = await fetchWithTenant(`/api/v1/academy/exams/${examId}/leaderboard`);
       if (res.ok) {
         setLeaderboardData(await res.json());
       }
@@ -237,12 +230,10 @@ export default function LiveExamsPage() {
     if (!evaluationResult || !activeExam) return;
     setDispatchStatus("sending");
     try {
-      const token = localStorage.getItem("token");
       const studentId = localStorage.getItem("user_id") || "48b63bba-313a-488c-85a3-5baa1b6bb193";
 
-      const res = await fetch("http://127.0.0.1:8000/api/v1/academy/dispatch-result-sms", {
+      const res = await fetchWithTenant("/api/v1/academy/dispatch-result-sms", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           exam_id: activeExam.id,
           student_id: studentId,
@@ -270,12 +261,10 @@ export default function LiveExamsPage() {
     formData.append("file", file);
 
     try {
-      const token = localStorage.getItem("token");
       const studentId = localStorage.getItem("user_id") || "48b63bba-313a-488c-85a3-5baa1b6bb193";
 
-      const res = await fetch(`http://127.0.0.1:8000/api/v1/academy/omr-camera-scan?exam_id=${selectedOmrExamId}&student_id=${studentId}`, {
+      const res = await fetchWithTenant(`/api/v1/academy/omr-camera-scan?exam_id=${selectedOmrExamId}&student_id=${studentId}`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
         body: formData
       });
 
@@ -306,18 +295,24 @@ export default function LiveExamsPage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-gray-900 dark:text-white flex items-center gap-2">
             <Trophy className="text-amber-500" size={26} />
-            <span>{language === "EN" ? "Live MCQ & OMR Evaluation Portal" : "লাইভ এমসিকিউ ও ওএমআর মূল্যায়ন পোর্টাল"}</span>
+            <span>
+              {userRole === "student"
+                ? (language === "EN" ? "Live Examinations & Quizzes" : "লাইভ পরীক্ষা ও কুইজ পোর্টাল")
+                : (language === "EN" ? "Live MCQ & OMR Evaluation Portal" : "লাইভ এমসিকিউ ও ওএমআর মূল্যায়ন পোর্টাল")}
+            </span>
           </h1>
           <p className="text-xs text-gray-500 mt-1">
-            Negative Marking: -0.25 deducted per wrong answer • Multimodal OMR Optical Scanning Active.
+            {userRole === "student"
+              ? (language === "EN" ? "Participate in timed live exams and view your merit performance ranking." : "লাইভ পরীক্ষায় অংশগ্রহণ করুন এবং তাৎক্ষণিক ফলাফল ও মেধা তালিকা দেখুন।")
+              : "Negative Marking: -0.25 deducted per wrong answer • Multimodal OMR Optical Scanning Active."}
           </p>
         </div>
 
-        {!examStarted && !evaluationResult && (
+        {!examStarted && !evaluationResult && userRole !== "student" && (
           <div className="flex items-center gap-2">
             <button
               onClick={() => { setSelectedOmrExamId(examList[0]?.id || ""); setShowOmrModal(true); }}
-              className="px-3.5 py-2 bg-gray-100 hover:bg-gray-200 dark:bg-white/5 dark:hover:bg-white/10 text-gray-700 dark:text-gray-300 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm"
+              className="px-3.5 py-2 bg-gray-100 hover:bg-gray-200 dark:bg-white/5 dark:hover:bg-white/10 text-gray-700 dark:text-gray-400 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm"
             >
               <Camera size={14} className="text-blue-500" />
               <span>Scan Paper OMR</span>
@@ -381,7 +376,7 @@ export default function LiveExamsPage() {
                   <div className="flex items-center gap-2">
                     <button
                       onClick={() => handleOpenLeaderboard(ex.id)}
-                      className="px-3.5 py-2 bg-gray-100 dark:bg-white/5 hover:bg-gray-200 dark:hover:bg-white/10 text-gray-700 dark:text-gray-300 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all"
+                      className="px-3.5 py-2 bg-gray-100 dark:bg-white/5 hover:bg-gray-200 dark:hover:bg-white/10 text-gray-700 dark:text-gray-400 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all"
                     >
                       <BarChart3 size={13} />
                       <span>Leaderboard</span>
@@ -417,7 +412,7 @@ export default function LiveExamsPage() {
           
           <div className="lg:col-span-8 space-y-4">
             <div className="flex items-center justify-between p-3.5 bg-white dark:bg-[#0f0f11] border border-gray-200 dark:border-white/10 rounded-2xl text-xs">
-              <span className="font-bold text-gray-700 dark:text-gray-300">
+              <span className="font-bold text-gray-700 dark:text-gray-400">
                 Question {currentQuestionIndex + 1} of {totalQuestions}
               </span>
               <span className="text-gray-400 font-mono">Answered: {answeredCount}</span>
@@ -450,7 +445,7 @@ export default function LiveExamsPage() {
                           className={`p-4 rounded-2xl border text-xs sm:text-sm text-left transition-all flex items-center gap-3 ${
                             isChosen
                               ? "bg-blue-50 border-blue-600 text-blue-700 dark:bg-blue-500/10 dark:border-blue-400 dark:text-blue-300 font-bold"
-                              : "border-gray-200 dark:border-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.03] text-gray-700 dark:text-gray-300"
+                              : "border-gray-200 dark:border-white/5 hover:bg-gray-50 dark:hover:bg-white/[0.03] text-gray-700 dark:text-gray-400"
                           }`}
                         >
                           <span className={`w-7 h-7 rounded-xl flex items-center justify-center font-mono font-bold text-xs shrink-0 ${
@@ -472,7 +467,7 @@ export default function LiveExamsPage() {
                 type="button"
                 disabled={currentQuestionIndex === 0}
                 onClick={() => setCurrentQuestionIndex((prev) => prev - 1)}
-                className="px-4 py-2 bg-gray-100 dark:bg-white/5 hover:bg-gray-200 dark:hover:bg-white/10 rounded-xl text-xs font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-1.5 disabled:opacity-40"
+                className="px-4 py-2 bg-gray-100 dark:bg-white/5 hover:bg-gray-200 dark:hover:bg-white/10 rounded-xl text-xs font-semibold text-gray-700 dark:text-gray-400 flex items-center gap-1.5 disabled:opacity-40"
               >
                 <ChevronLeft size={16} /> Previous
               </button>
@@ -556,7 +551,7 @@ export default function LiveExamsPage() {
               <span className="text-[10px] uppercase font-bold block">Penalty</span>
               <span className="text-2xl font-black">-{evaluationResult.negative_marks_deducted}</span>
             </div>
-            <div className="p-3.5 bg-gray-100 dark:bg-white/5 rounded-2xl text-gray-700 dark:text-gray-300">
+            <div className="p-3.5 bg-gray-100 dark:bg-white/5 rounded-2xl text-gray-700 dark:text-gray-400">
               <span className="text-[10px] uppercase font-bold block">Skipped</span>
               <span className="text-2xl font-black">{evaluationResult.unattempted}</span>
             </div>
@@ -573,7 +568,7 @@ export default function LiveExamsPage() {
 
             <button
               onClick={() => { setEvaluationResult(null); setExamStarted(false); setActiveExam(null); }}
-              className="px-5 py-2.5 rounded-xl bg-gray-100 dark:bg-white/5 hover:bg-gray-200 dark:hover:bg-white/10 text-gray-700 dark:text-gray-300 text-xs font-semibold flex items-center gap-1.5"
+              className="px-5 py-2.5 rounded-xl bg-gray-100 dark:bg-white/5 hover:bg-gray-200 dark:hover:bg-white/10 text-gray-700 dark:text-gray-400 text-xs font-semibold flex items-center gap-1.5"
             >
               <RotateCcw size={14} /> Return to Exam Catalog
             </button>
@@ -581,7 +576,7 @@ export default function LiveExamsPage() {
         </div>
       )}
 
-      {/* Modal 1: Udvash / Retina / Focus Style In-Page AI Exam Generator */}
+      {/* Modal 1: In-Page AI Exam Generator */}
       {showGenerateModal && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white dark:bg-[#0f0f11] border border-gray-200 dark:border-white/10 rounded-3xl p-6 w-full max-w-lg shadow-2xl space-y-4">
@@ -595,22 +590,22 @@ export default function LiveExamsPage() {
 
             <form onSubmit={handleGenerateAIExamInPage} className="space-y-3 text-xs">
               <div>
-                <label className="font-semibold text-gray-600 dark:text-gray-300">Target Coaching Program</label>
+                <label className="font-semibold text-gray-600 dark:text-gray-400">Target Coaching Program</label>
                 <select
                   value={genSubject}
                   onChange={(e) => setGenSubject(e.target.value)}
                   className="w-full mt-1 p-2.5 bg-gray-50 dark:bg-black/40 border border-gray-200 dark:border-white/10 rounded-xl outline-none font-semibold text-gray-900 dark:text-white"
                 >
-                  <option value="Physics 1st Paper (পদার্থবিজ্ঞান ১ম পত্র)">Engineering Care — Physics 1st Paper (Udvash Style)</option>
-                  <option value="Physics 2nd Paper (পদার্থবিজ্ঞান ২য় পত্র)">Engineering Care — Physics 2nd Paper (Udvash Style)</option>
-                  <option value="Chemistry 1st Paper (রসায়ন ১ম পত্র)">Medical Care — Chemistry 1st Paper (Retina Style)</option>
-                  <option value="Biology 2nd Paper (প্রাণিবিজ্ঞান)">Medical Care — Biology 2nd Paper (Retina Style)</option>
-                  <option value="Higher Math 1st Paper (উচ্চতর গণিত ১ম পত্র)">Varsity 'KA' — Higher Math 1st Paper (Focus Style)</option>
+                  <option value="Physics 1st Paper (পদার্থবিজ্ঞান ১ম পত্র)">Engineering Care — Physics 1st Paper (Standard Practice)</option>
+                  <option value="Physics 2nd Paper (পদার্থবিজ্ঞান ২য় পত্র)">Engineering Care — Physics 2nd Paper (Standard Practice)</option>
+                  <option value="Chemistry 1st Paper (রসায়ন ১ম পত্র)">Medical Care — Chemistry 1st Paper (Standard Practice)</option>
+                  <option value="Biology 2nd Paper (প্রাণিবিজ্ঞান)">Medical Care — Biology 2nd Paper (Standard Practice)</option>
+                  <option value="Higher Math 1st Paper (উচ্চতর গণিত ১ম পত্র)">Varsity 'KA' — Higher Math 1st Paper (Standard Practice)</option>
                 </select>
               </div>
 
               <div>
-                <label className="font-semibold text-gray-600 dark:text-gray-300">Syllabus Chapter / Topic *</label>
+                <label className="font-semibold text-gray-600 dark:text-gray-400">Syllabus Chapter / Topic *</label>
                 <input
                   required
                   value={genTopic}
@@ -622,7 +617,7 @@ export default function LiveExamsPage() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="font-semibold text-gray-600 dark:text-gray-300">Question Pattern</label>
+                  <label className="font-semibold text-gray-600 dark:text-gray-400">Question Pattern</label>
                   <select
                     value={genCount}
                     onChange={(e) => setGenCount(e.target.value)}
@@ -634,7 +629,7 @@ export default function LiveExamsPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="font-semibold text-gray-600 dark:text-gray-300">Time (Minutes)</label>
+                  <label className="font-semibold text-gray-600 dark:text-gray-400">Time (Minutes)</label>
                   <input
                     type="number"
                     value={genDuration}
@@ -729,7 +724,7 @@ export default function LiveExamsPage() {
 
             <div className="space-y-3">
               <div>
-                <label className="text-xs font-semibold text-gray-700 dark:text-gray-300">Select Exam Paper</label>
+                <label className="text-xs font-semibold text-gray-700 dark:text-gray-400">Select Exam Paper</label>
                 <select
                   value={selectedOmrExamId}
                   onChange={(e) => setSelectedOmrExamId(e.target.value)}

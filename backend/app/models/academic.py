@@ -13,7 +13,7 @@ class AcademicSession(TenantAwareModel):
     """
     __tablename__ = "academic_sessions"
 
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
     session_year = Column(String(10), nullable=False)
     is_current = Column(Boolean, default=False)
 
@@ -24,8 +24,10 @@ class ClassModel(TenantAwareModel):
     """
     __tablename__ = "classes"
 
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
     class_name = Column(String(50), nullable=False) # e.g., "Class 1", "Class 10"
+    group = Column(String(50), nullable=True) # e.g. "Science", "Humanities", "Business Studies"
+    shift = Column(String(50), nullable=True, default="Morning") # "Morning", "Day"
 
 class GradeLevel(Base):
     """Classes like Class 6, Class 7, etc."""
@@ -35,6 +37,8 @@ class GradeLevel(Base):
     tenant_id = Column(UUID(as_uuid=True), index=True, nullable=False)
     name = Column(String, index=True)  # e.g., "Class 6"
     description = Column(String, nullable=True)
+    group = Column(String(50), nullable=True) # e.g., "Science", "Humanities"
+    academic_year = Column(String(20), nullable=True, default="2026")
 
     subjects = relationship("Subject", back_populates="grade")
 
@@ -49,6 +53,9 @@ class Subject(Base):
     grade_id = Column(UUID(as_uuid=True), ForeignKey("grade_levels.id"), nullable=True) 
     
     name = Column(String, index=True)  # e.g., "General Science"
+    subject_code = Column(String(50), nullable=True) # e.g. "174"
+    group = Column(String(50), nullable=True) # e.g. "Science"
+    is_optional = Column(Boolean, default=False) # 4th / Optional subject
     is_nctb_standard = Column(Boolean, default=True)  # NCTB Baseline tracker
     core_competency = Column(String, nullable=True)  # e.g., "Scientific Logic, Critical Thinking"
     
@@ -64,6 +71,9 @@ class ClassRoutine(Base):
     tenant_id = Column(String, index=True, nullable=False)
     
     class_name = Column(String, index=True, nullable=False) # e.g. "Class 1"
+    section = Column(String(50), default="A", nullable=False) # e.g. "A", "B", "Rose"
+    shift = Column(String(50), default="Morning", nullable=False) # "Morning", "Day"
+    group = Column(String(50), nullable=True) # "Science", "Humanities", "Business Studies"
     day_of_week = Column(String, index=True, nullable=False) # Sunday, Monday, etc.
     period_number = Column(String, nullable=False)          # Period 1, Period 2
     start_time = Column(String, nullable=False)             # 09:00 AM
@@ -84,6 +94,8 @@ class DailyLessonLog(Base):
     tenant_id = Column(String, index=True, nullable=False)
     
     class_name = Column(String, index=True, nullable=False)
+    section = Column(String(50), default="A", nullable=True)
+    group = Column(String(50), nullable=True)
     subject = Column(String, index=True, nullable=False)
     teacher_name = Column(String, nullable=False)
     lesson_date = Column(DateTime(timezone=True), default=func.now())
@@ -92,3 +104,25 @@ class DailyLessonLog(Base):
     lecture_summary = Column(Text, nullable=False)
     homework_assigned = Column(Text, nullable=True)
     submission_deadline = Column(String, default="Next Class")
+
+
+class StudentEnrollmentHistory(Base):
+    """
+    Historical academic enrollment and session progression record.
+    Preserves past class, roll, section, and promotion metadata across year rollovers.
+    """
+    __tablename__ = "student_enrollment_history"
+    __table_args__ = {'extend_existing': True}
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(String(64), index=True, nullable=False)
+    student_id = Column(UUID(as_uuid=True), ForeignKey("students.id", ondelete="CASCADE"), index=True, nullable=False)
+    academic_year = Column(String(20), index=True, nullable=False)
+    class_name = Column(String(50), index=True, nullable=False)
+    section = Column(String(50), default="A", nullable=False)
+    roll_number = Column(String(50), nullable=True)
+    group = Column(String(50), nullable=True) # Science, Humanities, Business Studies
+    shift = Column(String(50), default="Morning", nullable=True)
+    promotion_status = Column(String(30), default="PROMOTED", nullable=False) # PROMOTED, RETAINED, TRANSFERRED, ADMITTED
+    remarks = Column(Text, nullable=True)
+    promoted_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

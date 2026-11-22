@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useLanguage } from "@/components/providers";
+import { fetchWithTenant } from "@/lib/api-client";
 import { 
   MessageSquare, ShieldAlert, CheckCircle2, 
   Send, RefreshCw, Loader2, User, ExternalLink, Sparkles 
@@ -27,13 +28,29 @@ export default function UnifiedInboxPage() {
   const [loading, setLoading] = useState(true);
   const [replyText, setReplyText] = useState("");
   const [sending, setSending] = useState(false);
+  const [userRole, setUserRole] = useState<string>("admin");
+
+  // Guardian inquiry state
+  const [inquiryText, setInquiryText] = useState("");
+  const [inquiryCategory, setInquiryCategory] = useState("General Inquiry");
+  const [submittingInquiry, setSubmittingInquiry] = useState(false);
+  const [inquirySuccess, setInquirySuccess] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const role = (localStorage.getItem("user_role") || "admin").toLowerCase();
+      setUserRole(role);
+    }
+  }, []);
 
   const fetchInbox = async () => {
+    setLoading(true);
     try {
-      const token = localStorage.getItem("token");
-      const res = await fetch("http://127.0.0.1:8000/api/v1/communication/inbox", {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const role = (localStorage.getItem("user_role") || "admin").toLowerCase();
+      const endpoint = (role === "guardian" || role === "student")
+        ? "/api/v1/communication/my-inquiries"
+        : "/api/v1/communication/inbox";
+      const res = await fetchWithTenant(endpoint);
       if (res.ok) {
         const data = await res.json();
         setMessages(data);
@@ -49,27 +66,44 @@ export default function UnifiedInboxPage() {
 
   useEffect(() => {
     fetchInbox();
-    // 10-second live polling for new inbound messages
-    const interval = setInterval(fetchInbox, 10000);
+    const interval = setInterval(fetchInbox, 15000);
     return () => clearInterval(interval);
-  }, []);
+  }, [userRole]);
 
   const handleSelectThread = (m: InboxMessage) => {
     setSelectedMsg(m);
     setReplyText(m.ai_draft || "");
   };
 
+  const handleSendInquiry = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!inquiryText.trim()) return;
+    setSubmittingInquiry(true);
+    setInquirySuccess(null);
+    try {
+      const res = await fetchWithTenant("/api/v1/communication/submit-inquiry", {
+        method: "POST",
+        body: JSON.stringify({
+          content: inquiryText.trim(),
+          category: inquiryCategory
+        })
+      });
+      if (res.ok) {
+        setInquiryText("");
+        setInquirySuccess(language === "EN" ? "Inquiry sent to school administration." : "আপনার বার্তাটি স্কুল প্রশাসনে পাঠানো হয়েছে।");
+        fetchInbox();
+      }
+    } finally {
+      setSubmittingInquiry(false);
+    }
+  };
+
   const handleSendReply = async () => {
     if (!selectedMsg || !replyText.trim()) return;
     setSending(true);
     try {
-      const token = localStorage.getItem("token");
-      const res = await fetch(`http://127.0.0.1:8000/api/v1/communication/${selectedMsg.id}/reply`, {
+      const res = await fetchWithTenant(`/api/v1/communication/${selectedMsg.id}/reply`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`
-        },
         body: JSON.stringify({ reply_content: replyText })
       });
 
@@ -100,21 +134,154 @@ export default function UnifiedInboxPage() {
         <div>
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-gray-900 dark:text-white flex items-center gap-2.5">
             <MessageSquare className="text-green-600 dark:text-green-400" />
-            <span>{language === "EN" ? "Unified Guardian Inbox" : "অভিভাবক মেসেজিং ও ইনবক্স হাব"}</span>
+            <span>
+              {userRole === "guardian" || userRole === "student"
+                ? (language === "EN" ? "Help Desk & School Inquiries" : "হেল্পডেস্ক ও প্রাতিষ্ঠানিক যোগাযোগ")
+                : (language === "EN" ? "Unified Guardian Inbox" : "অভিভাবক মেসেজিং ও ইনবক্স হাব")}
+            </span>
           </h1>
-          <p className="text-xs text-gray-500 mt-1">Live WhatsApp & SMS queue with Gemini 2.5 intent triage & safety guardrails.</p>
+          <p className="text-xs text-gray-500 mt-1">
+            {userRole === "guardian" || userRole === "student"
+              ? (language === "EN" ? "Send inquiries, leave notes, or questions directly to school administration." : "স্কুল কর্তৃপক্ষ ও শ্রেণি শিক্ষকের নিকট সরাসরি বার্তা বা আবেদন পাঠান।")
+              : "Live WhatsApp & SMS queue with Gemini 2.5 intent triage & safety guardrails."}
+          </p>
         </div>
 
         <button
           onClick={fetchInbox}
-          className="p-2.5 rounded-xl border border-gray-200 dark:border-white/10 hover:bg-gray-100 dark:hover:bg-white/5 text-gray-600 dark:text-gray-300 transition-colors"
+          className="p-2.5 rounded-xl border border-gray-200 dark:border-white/10 hover:bg-gray-100 dark:hover:bg-white/5 text-gray-600 dark:text-gray-400 transition-colors"
           title="Refresh Inbox"
         >
           <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
         </button>
       </div>
 
-      {/* Split View */}
+      {/* GUARDIAN & STUDENT HELPDESK EXPERIENCE */}
+      {(userRole === "guardian" || userRole === "student") ? (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 min-h-[65vh]">
+          {/* Submit New Inquiry Form (Left Pane) */}
+          <div className="lg:col-span-5 bg-white dark:bg-[#0f0f11] border border-gray-200 dark:border-white/10 rounded-3xl p-6 shadow-sm flex flex-col justify-between">
+            <div>
+              <div className="flex items-center gap-2 mb-4 text-green-600 dark:text-green-400 font-bold text-xs uppercase tracking-wider">
+                <Send size={15} />
+                <span>{language === "EN" ? "New School Inquiry" : "নতুন বার্তা / আবেদন পাঠান"}</span>
+              </div>
+
+              {inquirySuccess && (
+                <div className="mb-4 p-3 rounded-2xl bg-green-50 dark:bg-green-500/10 border border-green-200 dark:border-green-500/20 text-green-700 dark:text-green-300 text-xs flex items-center gap-2">
+                  <CheckCircle2 size={16} className="shrink-0" />
+                  <span>{inquirySuccess}</span>
+                </div>
+              )}
+
+              <form onSubmit={handleSendInquiry} className="space-y-4">
+                <div>
+                  <label className="block text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1.5">
+                    {language === "EN" ? "Inquiry Category" : "বিষয় / ক্যাটাগরি"}
+                  </label>
+                  <select
+                    value={inquiryCategory}
+                    onChange={(e) => setInquiryCategory(e.target.value)}
+                    className="w-full bg-gray-50 dark:bg-black/30 border border-gray-200 dark:border-white/10 rounded-xl px-3 py-2.5 text-xs text-gray-900 dark:text-white outline-none focus:border-green-500 font-medium"
+                  >
+                    <option value="General Inquiry">সাধারণ জিজ্ঞাসা (General Inquiry)</option>
+                    <option value="Leave / Absence Application">ছুটি বা অনুপস্থিতির আবেদন (Leave Note)</option>
+                    <option value="Academic & Syllabus Question">পাঠ্যক্রম ও পরীক্ষা সংক্রান্ত (Academic Query)</option>
+                    <option value="Fee & Account Query">ফি ও হিসাব সম্পর্কিত (Fee Clarification)</option>
+                    <option value="Feedback & Suggestion">মতামত ও পরামর্শ (Feedback)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1.5">
+                    {language === "EN" ? "Your Message / Details" : "বিস্তারিত বার্তা"}
+                  </label>
+                  <textarea
+                    rows={6}
+                    value={inquiryText}
+                    onChange={(e) => setInquiryText(e.target.value)}
+                    placeholder={language === "EN" ? "Write your inquiry or request to the administration..." : "স্কুল কর্তৃপক্ষের নিকট আপনার প্রশ্ন বা বার্তাটি লিখুন..."}
+                    className="w-full bg-gray-50 dark:bg-black/30 border border-gray-200 dark:border-white/10 rounded-2xl p-3 text-xs text-gray-900 dark:text-white outline-none focus:border-green-500 resize-none leading-relaxed"
+                    required
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={submittingInquiry || !inquiryText.trim()}
+                  className="w-full bg-green-600 hover:bg-green-700 text-white py-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 shadow-sm transition-all disabled:opacity-50"
+                >
+                  {submittingInquiry ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                  <span>{language === "EN" ? "Submit Inquiry" : "বার্তা পাঠান"}</span>
+                </button>
+              </form>
+            </div>
+
+            <div className="pt-4 border-t border-gray-100 dark:border-white/5 text-[11px] text-gray-400">
+              {language === "EN"
+                ? "School administration typically responds within 1 business day."
+                : "সাধারণত ১ কার্যদিবসের মধ্যে স্কুল কর্তৃপক্ষ আপনার বার্তার উত্তর প্রদান করবে।"}
+            </div>
+          </div>
+
+          {/* Past Inquiries & Status (Right Pane) */}
+          <div className="lg:col-span-7 bg-white dark:bg-[#0f0f11] border border-gray-200 dark:border-white/10 rounded-3xl p-6 shadow-sm overflow-y-auto custom-scrollbar flex flex-col gap-3">
+            <div className="text-[11px] font-bold uppercase tracking-wider text-gray-400 mb-1 flex justify-between items-center">
+              <span>{language === "EN" ? "My Previous Inquiries" : "আমার প্রেরিত বার্তাসমূহ"} ({messages.length})</span>
+            </div>
+
+            {loading && messages.length === 0 ? (
+              <div className="p-12 text-center text-gray-400 flex items-center justify-center gap-2">
+                <Loader2 className="animate-spin text-green-600" size={18} /> লোড হচ্ছে...
+              </div>
+            ) : messages.length === 0 ? (
+              <div className="p-12 text-center text-gray-400 text-xs">
+                {language === "EN" ? "You have not submitted any inquiries yet." : "আপনার কোনো পূর্ববর্তী বার্তা নেই।"}
+              </div>
+            ) : (
+              messages.map((m) => (
+                <div
+                  key={m.id}
+                  className="p-4 rounded-2xl border border-gray-100 dark:border-white/5 bg-gray-50/50 dark:bg-black/20 space-y-2"
+                >
+                  <div className="flex justify-between items-start">
+                    <span className="font-bold text-xs text-gray-900 dark:text-white">
+                      {m.intent || "General Inquiry"}
+                    </span>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${
+                      m.status === "Resolved"
+                        ? "bg-green-50 text-green-600 dark:bg-green-500/10"
+                        : "bg-amber-50 text-amber-600 dark:bg-amber-500/10"
+                    }`}>
+                      {m.status === "Resolved" ? (language === "EN" ? "Resolved" : "উত্তর প্রদান করা হয়েছে") : (language === "EN" ? "Pending Review" : "বিবেচনাধীন")}
+                    </span>
+                  </div>
+
+                  <p className="text-xs text-gray-700 dark:text-gray-400 leading-relaxed font-sans">
+                    {m.content}
+                  </p>
+
+                  {m.ai_draft && (
+                    <div className="mt-2 p-3 bg-white dark:bg-[#1a1a1e] rounded-xl border border-gray-200 dark:border-white/10 text-xs space-y-1">
+                      <span className="font-semibold text-green-600 dark:text-green-400 text-[10px] uppercase tracking-wider block">
+                        {language === "EN" ? "School Administration Response:" : "স্কুল কর্তৃপক্ষের উত্তর:"}
+                      </span>
+                      <p className="text-gray-800 dark:text-gray-200 leading-relaxed">
+                        {m.ai_draft}
+                      </p>
+                    </div>
+                  )}
+
+                  <div className="text-[10px] text-gray-400 pt-1">
+                    {new Date(m.created_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      ) : (
+      /* ADMIN & TEACHER WHATSAPP QUEUE EXPERIENCE */
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 h-[72vh]">
         
         {/* Thread List (Left Pane) */}
@@ -147,7 +314,7 @@ export default function UnifiedInboxPage() {
                   <span className={`text-[10px] font-bold px-2 py-0.5 rounded-md ${
                     m.risk_level === "High" ? "bg-red-50 text-red-600 dark:bg-red-500/10" :
                     m.status === "Resolved" ? "bg-green-50 text-green-600 dark:bg-green-500/10" :
-                    "bg-gray-100 text-gray-600 dark:bg-white/10 dark:text-gray-300"
+                    "bg-gray-100 text-gray-600 dark:bg-white/10 dark:text-gray-400"
                   }`}>
                     {m.status}
                   </span>
@@ -157,7 +324,7 @@ export default function UnifiedInboxPage() {
                   {m.student_meta}
                 </div>
 
-                <p className="text-xs text-gray-700 dark:text-gray-300 line-clamp-2 leading-relaxed">
+                <p className="text-xs text-gray-700 dark:text-gray-400 line-clamp-2 leading-relaxed">
                   {m.content}
                 </p>
               </button>
@@ -178,7 +345,7 @@ export default function UnifiedInboxPage() {
                     <p className="text-xs text-blue-600 dark:text-purple-400 mt-0.5">{selectedMsg.student_meta}</p>
                   </div>
                   <div className="text-right">
-                    <span className="text-[10px] uppercase font-mono px-2 py-1 bg-gray-100 dark:bg-white/10 rounded text-gray-600 dark:text-gray-300">
+                    <span className="text-[10px] uppercase font-mono px-2 py-1 bg-gray-100 dark:bg-white/10 rounded text-gray-600 dark:text-gray-400">
                       Intent: {selectedMsg.intent || "General"}
                     </span>
                   </div>
@@ -221,7 +388,7 @@ export default function UnifiedInboxPage() {
                 <button
                   type="button"
                   onClick={handleOpenWhatsAppDirect}
-                  className="px-4 py-2 rounded-xl border border-gray-200 dark:border-white/10 text-xs font-semibold hover:bg-gray-50 dark:hover:bg-white/5 flex items-center gap-1.5 text-gray-700 dark:text-gray-300 transition-colors"
+                  className="px-4 py-2 rounded-xl border border-gray-200 dark:border-white/10 text-xs font-semibold hover:bg-gray-50 dark:hover:bg-white/5 flex items-center gap-1.5 text-gray-700 dark:text-gray-400 transition-colors"
                 >
                   <ExternalLink size={13} /> Open WhatsApp Web
                 </button>
@@ -245,6 +412,7 @@ export default function UnifiedInboxPage() {
         </div>
 
       </div>
+      )}
     </div>
   );
 }

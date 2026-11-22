@@ -8,6 +8,7 @@ import {
   Building2, Palette, Sparkles, Shield, X, Save, 
   Loader2, Sun, Moon, Monitor, CheckCircle2, Download, UploadCloud, FileSpreadsheet 
 } from "lucide-react";
+import { fetchWithTenant } from "@/lib/api-client";
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -44,10 +45,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     const fetchProfile = async () => {
       setLoading(true);
       try {
-        const token = localStorage.getItem("token");
-        const res = await fetch("http://127.0.0.1:8000/api/v1/institution/profile", {
-          headers: { Authorization: `Bearer ${token}` }
-        });
+        const res = await fetchWithTenant("/api/v1/institution/profile");
         if (res.ok) {
           setProfile(await res.json());
         }
@@ -63,13 +61,8 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     setSaving(true);
     setFeedback(null);
     try {
-      const token = localStorage.getItem("token");
-      const res = await fetch("http://127.0.0.1:8000/api/v1/institution/profile", {
+      const res = await fetchWithTenant("/api/v1/institution/profile", {
         method: "PATCH",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`
-        },
         body: JSON.stringify(profile)
       });
       if (res.ok) {
@@ -90,10 +83,8 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     formData.append("file", file);
 
     try {
-      const token = localStorage.getItem("token");
-      const res = await fetch("http://127.0.0.1:8000/api/v1/institution/import-students-csv", {
+      const res = await fetchWithTenant("/api/v1/institution/import-students-csv", {
         method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
         body: formData
       });
       const data = await res.json();
@@ -189,7 +180,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                   <div className="space-y-6">
                     <form onSubmit={handleProfileSave} className="space-y-4">
                       <div>
-                        <label className="text-xs font-semibold text-gray-700 dark:text-gray-300">Institution Name</label>
+                        <label className="text-xs font-semibold text-gray-700 dark:text-gray-400">Institution Name</label>
                         <input
                           required
                           value={profile.school_name}
@@ -200,7 +191,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
                       <div className="grid grid-cols-2 gap-4">
                         <div>
-                          <label className="text-xs font-semibold text-gray-700 dark:text-gray-300">EIIN / Code</label>
+                          <label className="text-xs font-semibold text-gray-700 dark:text-gray-400">EIIN / Code</label>
                           <input
                             value={profile.eiin_or_code}
                             onChange={(e) => setProfile({...profile, eiin_or_code: e.target.value})}
@@ -208,7 +199,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                           />
                         </div>
                         <div>
-                          <label className="text-xs font-semibold text-gray-700 dark:text-gray-300">Academic Year</label>
+                          <label className="text-xs font-semibold text-gray-700 dark:text-gray-400">Academic Year</label>
                           <input
                             value={profile.academic_year}
                             onChange={(e) => setProfile({...profile, academic_year: e.target.value})}
@@ -218,7 +209,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                       </div>
 
                       <div>
-                        <label className="text-xs font-semibold text-gray-700 dark:text-gray-300">Tagline / Motto</label>
+                        <label className="text-xs font-semibold text-gray-700 dark:text-gray-400">Tagline / Motto</label>
                         <input
                           value={profile.tagline}
                           onChange={(e) => setProfile({...profile, tagline: e.target.value})}
@@ -227,7 +218,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                       </div>
 
                       <div>
-                        <label className="text-xs font-semibold text-gray-700 dark:text-gray-300">Address</label>
+                        <label className="text-xs font-semibold text-gray-700 dark:text-gray-400">Address</label>
                         <input
                           value={profile.address}
                           onChange={(e) => setProfile({...profile, address: e.target.value})}
@@ -256,7 +247,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                       <div className="flex items-center gap-3">
                         <button
                           onClick={downloadSampleCSV}
-                          className="px-4 py-2 rounded-xl border border-gray-200 dark:border-white/10 text-xs font-medium hover:bg-gray-50 dark:hover:bg-white/5 flex items-center gap-1.5 text-gray-700 dark:text-gray-300"
+                          className="px-4 py-2 rounded-xl border border-gray-200 dark:border-white/10 text-xs font-medium hover:bg-gray-50 dark:hover:bg-white/5 flex items-center gap-1.5 text-gray-700 dark:text-gray-400"
                         >
                           <Download size={14} /> Sample CSV
                         </button>
@@ -276,19 +267,19 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                     <div className="grid grid-cols-3 gap-3">
                       <button
                         onClick={() => setTheme("light")}
-                        className={`p-4 rounded-2xl border text-center transition-all ${theme === "light" ? "border-blue-600 bg-blue-50 text-blue-700 font-bold" : "border-gray-200 dark:border-white/10 text-gray-600 dark:text-gray-300"}`}
+                        className={`p-4 rounded-2xl border text-center transition-all ${theme === "light" ? "border-blue-600 bg-blue-50 text-blue-700 font-bold" : "border-gray-200 dark:border-white/10 text-gray-600 dark:text-gray-400"}`}
                       >
                         <Sun className="mx-auto mb-2" size={20} /> Light
                       </button>
                       <button
                         onClick={() => setTheme("dark")}
-                        className={`p-4 rounded-2xl border text-center transition-all ${theme === "dark" ? "border-purple-600 bg-purple-500/10 text-purple-400 font-bold" : "border-gray-200 dark:border-white/10 text-gray-600 dark:text-gray-300"}`}
+                        className={`p-4 rounded-2xl border text-center transition-all ${theme === "dark" ? "border-purple-600 bg-purple-500/10 text-purple-400 font-bold" : "border-gray-200 dark:border-white/10 text-gray-600 dark:text-gray-400"}`}
                       >
                         <Moon className="mx-auto mb-2" size={20} /> Dark
                       </button>
                       <button
                         onClick={() => setTheme("system")}
-                        className={`p-4 rounded-2xl border text-center transition-all ${theme === "system" ? "border-gray-600 bg-gray-100 dark:bg-white/10 font-bold text-gray-900 dark:text-white" : "border-gray-200 dark:border-white/10 text-gray-600 dark:text-gray-300"}`}
+                        className={`p-4 rounded-2xl border text-center transition-all ${theme === "system" ? "border-gray-600 bg-gray-100 dark:bg-white/10 font-bold text-gray-900 dark:text-white" : "border-gray-200 dark:border-white/10 text-gray-600 dark:text-gray-400"}`}
                       >
                         <Monitor className="mx-auto mb-2" size={20} /> Auto
                       </button>

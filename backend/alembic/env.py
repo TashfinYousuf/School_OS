@@ -13,13 +13,8 @@ sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from app.core.config import settings
 
 # 3. Import Base and ALL models so Alembic can detect the tables
-from app.models.base import Base
-from app.models.tenant import *
-from app.models.users import *
-from app.models.academic import *
-from app.models.student import *
-from app.models.guardian import *
-# Note: As we add new models (like finance, hr), we must import them here too!
+from app.models import Base
+
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -27,7 +22,8 @@ config = context.config
 
 # 4. Override the database URL dynamically from our .env file
 # This is secure because we don't hardcode passwords in alembic.ini
-config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+# Escape '%' for configparser interpolation safety
+config.set_main_option("sqlalchemy.url", settings.DATABASE_URL.replace("%", "%%"))
 
 # Interpret the config file for Python logging.
 if config.config_file_name is not None:

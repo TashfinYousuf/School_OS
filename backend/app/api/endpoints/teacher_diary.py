@@ -5,15 +5,13 @@ from pydantic import BaseModel
 from google import genai
 from google.genai import types
 
-from app.core.database import get_db
 from app.core.config import settings
-from app.api.deps import get_current_tenant_id, require_roles
+from app.api.deps import get_db, get_current_tenant_id, require_roles
 from app.models.academic import DailyLessonLog
 
 router = APIRouter()
 
-clean_api_key = settings.GEMINI_API_KEY.strip().strip('"').strip("'")
-ai_client = genai.Client(api_key=clean_api_key)
+from app.core.ai_client import ai_client
 
 class VoiceLessonInput(BaseModel):
     class_name: str
@@ -21,7 +19,7 @@ class VoiceLessonInput(BaseModel):
     teacher_name: str
     transcription_text: str  # Voice transcribed text or typed input
 
-@router.post("/voice-diary-sync", dependencies=[Depends(require_roles(["admin", "teacher"]))])
+@router.post("/voice-diary-sync", dependencies=[Depends(require_roles(["teacher"]))])
 def sync_teacher_voice_diary(
     payload: VoiceLessonInput,
     db: Session = Depends(get_db),
@@ -72,7 +70,7 @@ def sync_teacher_voice_diary(
             lecture_summary=", ".join(structured_log.get("subtopics_covered", [])),
             homework_assigned=structured_log.get("homework", "None"),
             submission_deadline="Next Class",
-            date=datetime.date.today()
+            lesson_date=datetime.datetime.now(datetime.timezone.utc)
         )
         db.add(lesson)
         db.commit()
@@ -83,4 +81,6 @@ def sync_teacher_voice_diary(
             "message": "Lesson event logged. Anti-Drift RAG updated."
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"AI Engine Error: {str(e)}")
+        import logging
+        logging.getLogger("educationos.teacher_diary").exception("Voice diary parsing failed")
+        raise HTTPException(status_code=502, detail="Voice diary processing service is temporarily unavailable.")

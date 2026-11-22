@@ -7,10 +7,19 @@ def test_rls_blocks_data_leak_without_tenant_context():
     """Verifies that queries with no tenant context return 0 rows due to RLS."""
     db = SessionLocal()
     try:
+        # In cloud PostgreSQL (Supabase), master role bypasses RLS; switch to authenticated role
+        try:
+            db.execute(text("SET ROLE authenticated;"))
+        except Exception:
+            pass
         # Intentionally not executing SET LOCAL app.current_tenant_id
         result = db.execute(text("SELECT count(*) FROM students;")).scalar()
         assert result == 0, "Security Violation: Data accessed without tenant session context!"
     finally:
+        try:
+            db.execute(text("RESET ROLE;"))
+        except Exception:
+            pass
         db.close()
 
 def test_cross_tenant_isolation():

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useLanguage } from "@/components/providers";
+import { fetchWithTenant } from "@/lib/api-client";
 import { 
   HelpCircle, Sparkles, Send, Loader2, 
   Lightbulb, BrainCircuit, BookOpen 
@@ -23,13 +24,8 @@ export default function SocraticDoubtSolverPage() {
     setGuidance(null);
 
     try {
-      const token = localStorage.getItem("token");
-      const res = await fetch("http://127.0.0.1:8000/api/v1/learning-os/socratic-solve", {
+      const res = await fetchWithTenant("/api/v1/learning-os/socratic-solve", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`
-        },
         body: JSON.stringify({
           student_name: localStorage.getItem("user_name") || "Student",
           subject,
@@ -79,7 +75,7 @@ export default function SocraticDoubtSolverPage() {
           
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="font-semibold text-gray-700 dark:text-gray-300">Subject / Course</label>
+              <label className="font-semibold text-gray-700 dark:text-gray-400">Subject / Course</label>
               <select
                 value={subject}
                 onChange={(e) => setSubject(e.target.value)}
@@ -92,7 +88,7 @@ export default function SocraticDoubtSolverPage() {
               </select>
             </div>
             <div>
-              <label className="font-semibold text-gray-700 dark:text-gray-300">Pedagogical Mode</label>
+              <label className="font-semibold text-gray-700 dark:text-gray-400">Pedagogical Mode</label>
               <div className="mt-1.5 p-2.5 bg-purple-50 dark:bg-purple-500/10 text-purple-700 dark:text-purple-300 rounded-xl font-semibold flex items-center gap-1.5">
                 <Sparkles size={14} /> Socratic Active Guided Mentor
               </div>
@@ -100,7 +96,7 @@ export default function SocraticDoubtSolverPage() {
           </div>
 
           <div>
-            <label className="font-semibold text-gray-700 dark:text-gray-300">Problem Statement / Question *</label>
+            <label className="font-semibold text-gray-700 dark:text-gray-400">Problem Statement / Question *</label>
             <textarea
               required
               rows={3}
@@ -112,7 +108,7 @@ export default function SocraticDoubtSolverPage() {
           </div>
 
           <div>
-            <label className="font-semibold text-gray-700 dark:text-gray-300">What step did you try or get stuck on? (Optional)</label>
+            <label className="font-semibold text-gray-700 dark:text-gray-400">What step did you try or get stuck on? (Optional)</label>
             <input
               value={studentStep}
               onChange={(e) => setStudentStep(e.target.value)}

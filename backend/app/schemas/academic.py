@@ -57,8 +57,7 @@ class SubjectResponse(SubjectBase):
     id: UUID
     grade_id: UUID
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 # --- Grade Levels (Classes) ---
 class GradeLevelBase(BaseModel):
@@ -73,5 +72,44 @@ class GradeLevelResponse(GradeLevelBase):
     tenant_id: UUID
     subjects: List[SubjectResponse] = []
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
+
+
+# --- Class 1–12 Canonical Structure & Catalogue ---
+class AcademicClassItem(BaseModel):
+    class_name: str
+    name_bn: str
+    grade_numeric: int
+    tier: str # pre_primary, primary, junior_secondary, secondary, higher_secondary
+    supported_groups: List[str] = [] # e.g. ["Science", "Humanities", "Business Studies"]
+    supported_shifts: List[str] = ["Morning", "Day"]
+    default_sections: List[str] = ["A", "B"]
+
+
+class PromotionStudentItem(BaseModel):
+    student_id: UUID
+    to_section: Optional[str] = "A"
+    to_roll: Optional[str] = None
+    to_group: Optional[str] = None
+    status: Optional[str] = "PROMOTED" # PROMOTED, RETAINED, TRANSFERRED
+
+
+class BulkPromotionRequest(BaseModel):
+    from_academic_year: str = Field(..., max_length=20)
+    to_academic_year: str = Field(..., max_length=20)
+    from_class: str = Field(..., max_length=50)
+    to_class: str = Field(..., max_length=50)
+    students: List[PromotionStudentItem] = Field(..., max_length=500)
+    dry_run: bool = True
+
+
+class BulkPromotionResponse(BaseModel):
+    from_academic_year: str
+    to_academic_year: str
+    from_class: str
+    to_class: str
+    dry_run: bool
+    promoted_count: int
+    retained_count: int
+    transferred_count: int
+    details: List[dict]

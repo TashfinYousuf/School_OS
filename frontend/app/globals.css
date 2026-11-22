@@ -1,12 +1,58 @@
 @import "tailwindcss";
-@custom-variant dark (&:where(.dark, .dark *)); /* এই লাইন থিম সুইচ করাবে */
+@import "tw-animate-css";
+
+/* class-based dark mode, next-themes (attribute="class") chalay */
+@custom-variant dark (&:where(.dark, .dark *));
 
 /* ═══════════════════════════════════════════════════════════
-   DESIGN TOKENS — Deep Premium Dark
-   All HSL values stored as raw components so the / opacity
-   modifier works: hsl(var(--primary) / 0.2)
+   DESIGN TOKENS
+   Raw HSL component, tai plain CSS e hsl(var(--primary) / 0.2) kaj kore.
+   :root = light theme.  .dark = "Deep Premium Dark" (ager value, unchanged).
 ═══════════════════════════════════════════════════════════ */
 :root {
+  color-scheme: light;
+
+  --background:              0 0% 100%;
+  --foreground:              240 10% 3.9%;
+
+  --card:                    0 0% 100%;
+  --card-foreground:         240 10% 3.9%;
+
+  --popover:                 0 0% 100%;
+  --popover-foreground:      240 10% 3.9%;
+
+  --primary:                 262 83% 58%;
+  --primary-foreground:      0 0% 98%;
+
+  --secondary:               240 4.8% 95.9%;
+  --secondary-foreground:    240 5.9% 10%;
+
+  --muted:                   240 4.8% 95.9%;
+  --muted-foreground:        240 3.8% 46.1%;
+
+  --accent:                  240 4.8% 95.9%;
+  --accent-foreground:       240 5.9% 10%;
+
+  --destructive:             0 84.2% 60.2%;
+  --destructive-foreground:  0 0% 98%;
+
+  --border:                  240 5.9% 90%;
+  --input:                   240 5.9% 90%;
+  --ring:                    262 83% 58%;
+
+  --radius:                  0.75rem;
+  --ai-glow:                 262 83% 58%;
+
+  --glow-a:                  0.05;
+  --glow-b:                  0.035;
+  --gradient-end:            280 75% 48%;
+  --glass-sidebar-from:      hsl(240 10% 98%);
+  --glass-sidebar-to:        hsl(240 8% 95%);
+}
+
+.dark {
+  color-scheme: dark;
+
   --background:              240 10% 3.9%;
   --foreground:              0 0% 98%;
 
@@ -16,7 +62,7 @@
   --popover:                 240 10% 5.5%;
   --popover-foreground:      0 0% 98%;
 
-  --primary:                 262 83% 70%;       /* AI Purple */
+  --primary:                 262 83% 70%;
   --primary-foreground:      240 5.9% 10%;
 
   --secondary:               240 3.7% 13%;
@@ -35,15 +81,18 @@
   --input:                   240 3.7% 12%;
   --ring:                    262 83% 70%;
 
-  --radius:                  0.75rem;
   --ai-glow:                 262 83% 70%;
+
+  --glow-a:                  0.09;
+  --glow-b:                  0.06;
+  --gradient-end:            280 80% 78%;
+  --glass-sidebar-from:      hsl(240 10% 5.2%);
+  --glass-sidebar-to:        hsl(240 10% 4.2%);
 }
 
 /* ═══════════════════════════════════════════════════════════
-   THEME MAPPING — registers utilities like bg-background,
-   text-foreground, border-border, text-primary, etc.
-   hsl() wrapper here because @theme inline resolves at
-   build time against these exact values.
+   THEME MAPPING: bg-background, text-foreground, border-border ...
+   Value runtime e var() theke ashe, tai .dark toggle e sathe sathe bodlay.
 ═══════════════════════════════════════════════════════════ */
 @theme inline {
   --color-background:              hsl(var(--background));
@@ -85,83 +134,92 @@
     font-feature-settings: "rlig" 1, "calt" 1;
   }
 
-  /* Premium thin scrollbar throughout the app */
+  /* Tailwind v4 e button er default cursor: default. Pointer ferot ana holo. */
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
+    cursor: pointer;
+  }
+
+  /* Thin scrollbar: WebKit/Blink */
   ::-webkit-scrollbar              { width: 4px; height: 4px; }
   ::-webkit-scrollbar-track        { background: transparent; }
   ::-webkit-scrollbar-thumb        { background: hsl(var(--border)); border-radius: 999px; }
   ::-webkit-scrollbar-thumb:hover  { background: hsl(var(--muted-foreground)); }
+
+  /* Firefox only: Chrome e scrollbar-width/color dile ::-webkit-scrollbar style bondho hoye jay */
+  @supports not selector(::-webkit-scrollbar) {
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: hsl(var(--border)) transparent;
+    }
+  }
 }
 
 /* ═══════════════════════════════════════════════════════════
-   UTILITIES — Premium Dark Glassmorphism System
+   CUSTOM UTILITIES (Tailwind v4: @utility, tai hover:/dark:/md: variant kaj kore)
 ═══════════════════════════════════════════════════════════ */
-@layer utilities {
 
-  /* Ambient page background — subtle dual-sided purple radial glow */
-  .dashboard-bg {
-    background-color: hsl(var(--background));
-    background-image:
-      radial-gradient(ellipse 70% 45% at 15% -5%,  hsl(var(--ai-glow) / 0.09) 0%, transparent 65%),
-      radial-gradient(ellipse 50% 35% at 88% 105%, hsl(var(--ai-glow) / 0.06) 0%, transparent 60%);
-  }
+/* Ambient page background */
+@utility dashboard-bg {
+  background-color: hsl(var(--background));
+  background-image:
+    radial-gradient(ellipse 70% 45% at 15% -5%,  hsl(var(--ai-glow) / var(--glow-a)) 0%, transparent 65%),
+    radial-gradient(ellipse 50% 35% at 88% 105%, hsl(var(--ai-glow) / var(--glow-b)) 0%, transparent 60%);
+}
 
-  /* Generic glass card — for content panels */
-  .glass-panel {
-    @apply bg-white/[0.03] backdrop-blur-2xl border border-white/[0.07]
-           shadow-[0_8px_32px_rgb(0,0,0,0.35)];
-  }
+/* Glass card, content panel */
+@utility glass-panel {
+  @apply border border-black/[0.08] bg-black/[0.02] backdrop-blur-2xl
+         shadow-[0_8px_32px_rgb(0,0,0,0.08)]
+         dark:border-white/[0.07] dark:bg-white/[0.03] dark:shadow-[0_8px_32px_rgb(0,0,0,0.35)];
+}
 
-  /* Sidebar — slightly richer tint + vertical gradient */
-  .glass-sidebar {
-    background: linear-gradient(
-      180deg,
-      hsl(240 10% 5.2%) 0%,
-      hsl(240 10% 4.2%) 100%
-    );
-    border-right: 1px solid hsl(var(--border) / 0.8);
-    backdrop-filter: blur(40px);
-  }
+/* Elevated card */
+@utility glass-card {
+  @apply rounded-xl border border-black/[0.08] bg-black/[0.025] backdrop-blur-xl
+         shadow-[0_4px_24px_rgb(0,0,0,0.06)]
+         dark:border-white/[0.08] dark:bg-white/[0.04] dark:shadow-[0_4px_24px_rgb(0,0,0,0.25)];
+}
 
-  /* Elevated card */
-  .glass-card {
-    @apply bg-white/[0.04] backdrop-blur-xl border border-white/[0.08]
-           rounded-xl shadow-[0_4px_24px_rgb(0,0,0,0.25)];
-  }
+/* Sidebar */
+@utility glass-sidebar {
+  background: linear-gradient(180deg, var(--glass-sidebar-from) 0%, var(--glass-sidebar-to) 100%);
+  border-right: 1px solid hsl(var(--border) / 0.8);
+  backdrop-filter: blur(40px);
+}
 
-  /* AI accent border + inner glow */
-  .ai-glow-border {
-    border: 1px solid hsl(var(--ai-glow) / 0.35);
-    box-shadow:
-      0 0 18px hsl(var(--ai-glow) / 0.12),
-      inset 0 0 14px hsl(var(--ai-glow) / 0.06);
-  }
+/* AI accent border + inner glow */
+@utility ai-glow-border {
+  border: 1px solid hsl(var(--ai-glow) / 0.35);
+  box-shadow:
+    0 0 18px hsl(var(--ai-glow) / 0.12),
+    inset 0 0 14px hsl(var(--ai-glow) / 0.06);
+}
 
-  /* Outer glow drop-shadow */
-  .ai-shadow {
-    box-shadow: 0 0 28px hsl(var(--ai-glow) / 0.3);
-  }
+/* Outer glow */
+@utility ai-shadow {
+  box-shadow: 0 0 28px hsl(var(--ai-glow) / 0.3);
+}
 
-  /* Gradient brand / heading text */
-  .gradient-text {
-    background: linear-gradient(130deg, hsl(var(--ai-glow)) 0%, hsl(280 80% 78%) 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-  }
+/* Gradient brand / heading text */
+@utility gradient-text {
+  background: linear-gradient(130deg, hsl(var(--ai-glow)) 0%, hsl(var(--gradient-end)) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
 
-  /* Sidebar nav active state — left-accent bar + purple wash */
-  .nav-active {
-    background: linear-gradient(
-      90deg,
-      hsl(var(--ai-glow) / 0.18) 0%,
-      hsl(var(--ai-glow) / 0.04) 100%
-    );
-    position: relative;
-  }
+/* Sidebar nav active: left-accent bar + purple wash */
+@utility nav-active {
+  background: linear-gradient(
+    90deg,
+    hsl(var(--ai-glow) / 0.18) 0%,
+    hsl(var(--ai-glow) / 0.04) 100%
+  );
+  position: relative;
 
-  /* The left accent stripe via pseudo-element (respects border-radius) */
-  .nav-active::before {
-    content: '';
+  &::before {
+    content: "";
     position: absolute;
     left: 0;
     top: 20%;

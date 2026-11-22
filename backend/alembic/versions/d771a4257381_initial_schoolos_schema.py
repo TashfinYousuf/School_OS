@@ -1,4 +1,4 @@
-"""Initial SchoolOS schema
+"""Initial EducationOS schema
 
 Revision ID: d771a4257381
 Revises: 

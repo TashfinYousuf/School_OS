@@ -1,3 +1,5 @@
+import os
+import logging
 import uuid
 import datetime
 import json
@@ -6,36 +8,38 @@ import base64
 from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 from pydantic import BaseModel, Field
 
 from google import genai
 from google.genai import types
 
 from app.core.config import settings
-from app.core.database import get_db
-from app.api.deps import get_current_tenant_id, require_roles
+from app.api.deps import get_db, get_current_tenant_id, require_roles
 from app.models.academy import AcademicProgram, AcademyBatch, BatchEnrollment
 from app.models.live_exam import LiveExam, ExamSubmission
 from app.models.student import Student
+from app.services.institution import get_institution_profile
+from app.models.guardian import Guardian, GuardianStudentLink
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # Initialize clean Gemini client
-clean_api_key = settings.GEMINI_API_KEY.strip().strip('"').strip("'")
-ai_client = genai.Client(api_key=clean_api_key)
+from app.core.ai_client import ai_client
 
 # --- Pydantic Schemas ---
 class ProgramCreatePayload(BaseModel):
-    name: str = Field(..., example="Engineering Admission 2026")
-    target_exam: str = Field(..., example="BUET & Engineering University Entry")
+    name: str = Field(..., json_schema_extra={"example": "Engineering Admission 2026"})
+    target_exam: str = Field(..., json_schema_extra={"example": "BUET & Engineering University Entry"})
     course_fee: float = Field(..., gt=0)
     duration_months: int = 6
 
 class BatchCreatePayload(BaseModel):
     program_id: uuid.UUID
-    batch_name: str = Field(..., example="Morning Shift - Alpha")
-    shift_time: str = Field(..., example="08:00 AM - 11:30 AM")
-    days_schedule: str = Field(..., example="Sat, Mon, Wed")
+    batch_name: str = Field(..., json_schema_extra={"example": "Morning Shift - Alpha"})
+    shift_time: str = Field(..., json_schema_extra={"example": "08:00 AM - 11:30 AM"})
+    days_schedule: str = Field(..., json_schema_extra={"example": "Sat, Mon, Wed"})
     max_seat_capacity: int = 60
     classroom_number: Optional[str] = "Lecture Hall 1"
 
@@ -51,11 +55,11 @@ class ExamSubmitPayload(BaseModel):
 
 class GenerateExamPayload(BaseModel):
     program_id: Optional[uuid.UUID] = None
-    subject: str = Field(..., example="Physics")
-    topic: str = Field(..., example="Newtonian Mechanics & Vectors")
+    subject: str = Field(..., json_schema_extra={"example": "Physics"})
+    topic: str = Field(..., json_schema_extra={"example": "Newtonian Mechanics & Vectors"})
     question_count: int = Field(default=5, ge=2, le=25)
     duration_minutes: int = Field(default=15, ge=5, le=120)
-    difficulty: str = Field(default="Admission Standard", example="HSC Board / Admission Standard")
+    difficulty: str = Field(default="Admission Standard", json_schema_extra={"example": "HSC Board / Admission Standard"})
     negative_marking_rate: float = Field(default=0.25)
 
 class ResultDispatchPayload(BaseModel):
@@ -186,48 +190,79 @@ def evaluate_exam_submission(
     payload: ExamSubmitPayload,
     db: Session = Depends(get_db),
     tenant_id: str = Depends(get_current_tenant_id),
-    _=Depends(require_roles(["admin", "teacher", "student"]))
+    claims: dict = Depends(require_roles(["admin", "teacher", "student"]))
 ):
     """
     Authoritative Exam Submission Engine:
-      1. Concurrency Check: Prevents duplicate submissions per student.
-      2. Authoritative Time Check: Validates against server window (not browser clock).
-      3. Negative Marking Calculation: (+1.0 for correct, -0.25 for incorrect).
+    1. Anti-IDOR: Enforces that student accounts can only submit their own paper.
+    2. Concurrency Safe: Uses row-level lock on the Student record to prevent race conditions.
+    3. Server-Authoritative Timing: Verifies submission against server clock.
+    4. Deterministic Negative Marking (+1.0 / -0.25).
     """
     now = datetime.datetime.now(datetime.timezone.utc)
+    current_role = claims["role"]
+    current_user_id = claims["user_id"]
 
-    # 1. Fetch Exam
-    exam = db.query(LiveExam).filter(
-        LiveExam.id == payload.exam_id,
-        LiveExam.tenant_id == str(tenant_id)
-    ).first()
-    if not exam:
-        raise HTTPException(status_code=404, detail="Live Exam record not found.")
+    # 1. Anti-IDOR Guard: Students cannot impersonate other students
+    if current_role == "student":
+        student_record = db.query(Student).filter(
+            Student.id == payload.student_id,
+            Student.tenant_id == str(tenant_id)
+        ).first()
 
-    # 2. Concurrency Lock: Check if student already submitted this exam
+        if not student_record or (
+            str(student_record.id) != str(current_user_id) and 
+            str(getattr(student_record, "user_id", "")) != str(current_user_id)
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Security Violation: You are not authorized to submit an exam for this student."
+            )
+
+    # 2. Concurrency Lock: Lock the student row within the active tenant
+    # Since the student exists, SELECT FOR UPDATE creates an exclusive lock for this transaction
+    locked_student = db.query(Student).filter(
+        Student.id == payload.student_id,
+        Student.tenant_id == str(tenant_id)
+    ).with_for_update().first()
+
+    if not locked_student:
+        raise HTTPException(status_code=404, detail="Student profile not found.")
+
+    # 3. Check for existing submission inside the locked boundary
     existing_submission = db.query(ExamSubmission).filter(
         ExamSubmission.exam_id == payload.exam_id,
         ExamSubmission.student_id == payload.student_id,
         ExamSubmission.tenant_id == str(tenant_id)
     ).first()
+
     if existing_submission:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Duplicate submission blocked. You have already completed and submitted this examination."
+            detail="Idempotency lock: This examination has already been finalized and evaluated."
         )
 
-    # 3. Server-Authoritative Expiry Check (Allow 120-second network latency grace period)
+    # 4. Fetch Exam and Verify Server Window
+    exam = db.query(LiveExam).filter(
+        LiveExam.id == payload.exam_id,
+        LiveExam.tenant_id == str(tenant_id)
+    ).first()
+
+    if not exam:
+        raise HTTPException(status_code=404, detail="Live Exam record not found.")
+
     if exam.end_time:
-        max_allowed_time = exam.end_time + datetime.timedelta(seconds=120)
-        if now > max_allowed_time:
+        # 120-second latency grace period for mobile network delay
+        if now > (exam.end_time + datetime.timedelta(seconds=120)):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Exam submission rejected: Official server testing window has expired."
+                detail="Submission rejected: Official server testing window has closed."
             )
 
-    # 4. Parse Questions Safely
+    # 5. Parse Questions & Evaluate
     questions = exam.questions_payload or []
     if isinstance(questions, str):
+        import json
         try:
             questions = json.loads(questions)
         except Exception:
@@ -238,12 +273,10 @@ def evaluate_exam_submission(
     unattempted_count = 0
     questions_review = []
 
-    # 5. Deterministic Answer Grading
     for idx, q in enumerate(questions):
         q_id = q.get("id") or f"q_{idx}"
         correct_choice = str(q.get("correct_option", "")).strip()
 
-        # Match against all client payload key variations (e.g., 'q_0', '0')
         student_choice = (
             payload.answers.get(q_id) or 
             payload.answers.get(f"q_{idx}") or 
@@ -273,31 +306,36 @@ def evaluate_exam_submission(
             "student_answer": student_choice if not is_unatt else None,
             "is_correct": is_corr,
             "is_unattempted": is_unatt,
-            "explanation": q.get("explanation", "Solution strictly evaluated against academic curriculum standards.")
+            "explanation": q.get("explanation", "Standard curriculum evaluation.")
         })
 
-    # 6. Negative Marking Logic
+    # 6. Negative Marking Logic (+1.0 / -0.25)
     total_q = len(questions) or int(exam.total_marks) or 1
     neg_rate = float(exam.negative_marking_rate or 0.25)
     penalty = round(wrong_count * neg_rate, 2)
-    raw_score = (correct_count * 1.0) - penalty
-    final_score = round(max(raw_score, 0.0), 2)
+    final_score = round(max((correct_count * 1.0) - penalty, 0.0), 2)
     accuracy = round((correct_count / total_q) * 100, 1)
 
-    # 7. Atomic Persistence
-    submission = ExamSubmission(
-        tenant_id=str(tenant_id),
-        exam_id=exam.id,
-        student_id=payload.student_id,
-        correct_count=correct_count,
-        wrong_count=wrong_count,
-        unattempted_count=unattempted_count,
-        obtained_score=final_score,
-        accuracy_percentage=accuracy,
-        student_answers=payload.answers
-    )
-    db.add(submission)
-    db.commit()
+    try:
+        submission = ExamSubmission(
+            tenant_id=str(tenant_id),
+            exam_id=exam.id,
+            student_id=payload.student_id,
+            correct_count=correct_count,
+            wrong_count=wrong_count,
+            unattempted_count=unattempted_count,
+            obtained_score=final_score,
+            accuracy_percentage=accuracy,
+            student_answers=payload.answers
+        )
+        db.add(submission)
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Concurrent write blocked: Exam submission already processed."
+        )
 
     return {
         "score": final_score,
@@ -309,6 +347,7 @@ def evaluate_exam_submission(
         "accuracy": f"{accuracy}%",
         "reviews": questions_review
     }
+
 
 # 2. Delete Live Exam Endpoint
 @router.delete("/exams/{exam_id}", status_code=status.HTTP_200_OK)
@@ -561,34 +600,26 @@ def get_exam_leaderboard(
     }
 
 
-@router.post("/dispatch-result-sms", dependencies=[Depends(require_roles(["admin", "teacher"]))])
-def dispatch_guardian_exam_result(
-    payload: ResultDispatchPayload,
-    db: Session = Depends(get_db),
-    tenant_id: str = Depends(get_current_tenant_id)
-):
-    student = db.query(Student).filter(Student.id == payload.student_id).first()
-    if not student:
-        raise HTTPException(status_code=404, detail="Student not found")
+def assert_student_and_exam_scope(db: Session, tenant_id: str, student_id: uuid.UUID, exam_id: uuid.UUID):
+    """
+    Guarantees cross-tenant resource containment and masks existence oracle via generic 404 (F1).
+    """
+    student = db.query(Student).filter(
+        Student.id == student_id,
+        Student.tenant_id == str(tenant_id)
+    ).first()
 
-    exam = db.query(LiveExam).filter(LiveExam.id == payload.exam_id).first()
-    exam_title = exam.title if exam else "Assessment Test"
+    exam = db.query(LiveExam).filter(
+        LiveExam.id == exam_id,
+        LiveExam.tenant_id == str(tenant_id)
+    ).first()
 
-    # Format official notification text (English Standard with Bengali context)
-    guardian_phone = getattr(student, "guardian_phone", "+8801971122084")
-    message = (
-        f"Dear Guardian, your ward {student.first_name} {student.last_name} has completed '{exam_title}'. "
-        f"Score: {payload.score}/{payload.total_marks}. Merit Rank: {payload.rank}. "
-        f"Kids Shine International School (Nazrul Avenue, Kandirpar, Cumilla)."
-    )
-
-    # In pilot mode, log the automated SMS queue entry
-    return {
-        "status": "QUEUED",
-        "recipient": guardian_phone,
-        "message": message,
-        "channel": "WhatsApp / SMS Gateway"
-    }
+    if not student or not exam:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Requested examination or student profile not found."
+        )
+    return student, exam
 
 
 # --- 5. Phase P3.5: Multimodal Gemini 2.5 Flash Optical OMR Scanner ---
@@ -603,13 +634,9 @@ async def scan_offline_omr_sheet(
     """
     Multimodal Vision Ingestion: Reads paper OMR bubble sheets via mobile camera
     and auto-grades using Gemini 2.5 Flash Vision.
+    Enforces strict tenant containment on both exam and student.
     """
-    exam = db.query(LiveExam).filter(
-        LiveExam.id == exam_id,
-        LiveExam.tenant_id == str(tenant_id)
-    ).first()
-    if not exam:
-        raise HTTPException(status_code=404, detail="Live Exam not found.")
+    student, exam = assert_student_and_exam_scope(db, tenant_id, student_id, exam_id)
 
     image_bytes = await file.read()
     image_base64 = base64.b64encode(image_bytes).decode('utf-8')
@@ -623,22 +650,29 @@ async def scan_offline_omr_sheet(
         "If a question has no filled circle, omit it from the JSON."
     )
 
+    if not ai_client:
+        raise HTTPException(
+            status_code=503,
+            detail="OMR Vision engine is unavailable (Gemini API key not configured)."
+        )
+
     detected_answers = {}
-    if ai_client:
-        try:
-            response = ai_client.models.generate_content(
-                model='gemini-2.5-flash',
-                contents=[
-                    types.Part.from_bytes(data=image_bytes, mime_type=file.content_type or "image/jpeg"),
-                    prompt
-                ]
-            )
-            clean_text = response.text.strip().replace("```json", "").replace("```", "").strip()
-            detected_answers = json.loads(clean_text)
-        except Exception as e:
-            print(f"⚠️ OMR Vision error: {e}. Applying simulated optical parse.")
-            # Fallback mock parsed options
-            detected_answers = {"q_0": "A", "q_1": "B", "q_2": "Watt", "q_3": "Speed"}
+    try:
+        response = ai_client.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=[
+                types.Part.from_bytes(data=image_bytes, mime_type=file.content_type or "image/jpeg"),
+                prompt
+            ]
+        )
+        clean_text = response.text.strip().replace("```json", "").replace("```", "").strip()
+        detected_answers = json.loads(clean_text)
+    except Exception as e:
+        logger.error("OMR Vision parse failed tenant=%s exam=%s: %s", tenant_id, exam.id, e)
+        raise HTTPException(
+            status_code=502,
+            detail="OMR optical vision parsing failed; please ensure clear image framing and retry."
+        )
 
     # Grade the detected answers against exam.questions_payload
     questions = exam.questions_payload or []
@@ -703,24 +737,48 @@ def dispatch_guardian_exam_result(
     db: Session = Depends(get_db),
     tenant_id: str = Depends(get_current_tenant_id)
 ):
-    student = db.query(Student).filter(Student.id == payload.student_id).first()
-    if not student:
-        raise HTTPException(status_code=404, detail="Student not found.")
+    student, exam = assert_student_and_exam_scope(db, tenant_id, payload.student_id, payload.exam_id)
+    exam_title = exam.title or "Assessment Test"
 
-    exam = db.query(LiveExam).filter(LiveExam.id == payload.exam_id).first()
-    exam_title = exam.title if exam else "Assessment Test"
+    inst = get_institution_profile(db, tenant_id)
+    row = (db.query(Guardian.phone_number)
+            .join(GuardianStudentLink, GuardianStudentLink.guardian_id == Guardian.id)
+            .filter(
+                GuardianStudentLink.student_id == student.id,
+                GuardianStudentLink.tenant_id == str(tenant_id),
+                GuardianStudentLink.verification_status == "VERIFIED",
+            )
+            .first())
+    guardian_phone = row[0] if row and row[0] else None
+    
+    if not guardian_phone:
+        raise HTTPException(status_code=422, detail="No verified guardian phone on record for this student.")
 
-    guardian_phone = getattr(student, "guardian_phone", "+8801971122084")
     message = (
         f"Dear Guardian, your ward {student.first_name} {student.last_name} has completed '{exam_title}'. "
         f"Score: {payload.score}/{payload.total_marks}. Merit Rank: {payload.rank}. "
-        f"Kids Shine International School (Nazrul Avenue, Kandirpar, Cumilla-3500)."
+        f"{inst.name}" + (f" ({inst.address})" if inst.address else "") + "."
     )
 
+    sms_gateway_url = os.getenv("SMS_GATEWAY_URL", "").strip()
+    sms_api_key = os.getenv("SMS_API_KEY", "").strip()
+    if not sms_gateway_url or not sms_api_key:
+        return {
+            "status": "DELIVERY_NOT_CONFIGURED",
+            "delivery_configured": False,
+            "recipient": guardian_phone,
+            "message": message,
+            "channel": "WhatsApp / SMS Gateway (Manual Preview Only)",
+            "detail": "SMS gateway credentials (SMS_GATEWAY_URL / SMS_API_KEY) are not configured; message was NOT sent.",
+            "timestamp": datetime.datetime.now(datetime.timezone.utc).strftime("%d %b, %Y • %I:%M %p")
+        }
+
     return {
-        "status": "DISPATCHED",
+        "status": "QUEUED",
+        "delivery_configured": True,
         "recipient": guardian_phone,
         "message": message,
         "channel": "WhatsApp / SMS Gateway",
+        "detail": "Gateway credentials configured; hand off to outbound dispatcher.",
         "timestamp": datetime.datetime.now(datetime.timezone.utc).strftime("%d %b, %Y • %I:%M %p")
     }

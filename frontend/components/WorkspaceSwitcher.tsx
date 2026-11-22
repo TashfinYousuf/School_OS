@@ -1,13 +1,43 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useWorkspace } from "@/lib/workspaceContext";
-import { Building2, ChevronDown, Check } from "lucide-react";
+import { Building2, ChevronDown, Check, School } from "lucide-react";
 
 export default function WorkspaceSwitcher() {
   const { currentWorkspace, switchWorkspace, availableWorkspaces } = useWorkspace();
   const [isOpen, setIsOpen] = useState(false);
+  const [userRole, setUserRole] = useState<string>("admin");
 
+  useEffect(() => {
+    const role = (localStorage.getItem("user_role") || "").toLowerCase();
+    setUserRole(role);
+  }, []);
+
+  // For students and guardians: fixed enrolled institution badge (no switcher dropdown)
+  if (userRole === "student" || userRole === "guardian") {
+    return (
+      <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-gray-200 dark:border-white/10 bg-gray-50/80 dark:bg-white/[0.02] text-xs font-semibold text-gray-700 dark:text-neutral-300">
+        <School size={14} className="text-blue-600 dark:text-purple-400" />
+        <span className="max-w-[160px] truncate">{currentWorkspace.name}</span>
+      </div>
+    );
+  }
+
+  // Single-workspace tenant: show clean static badge without dropdown affordance
+  if (!availableWorkspaces || availableWorkspaces.length <= 1) {
+    return (
+      <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-gray-200 dark:border-white/10 bg-white/50 dark:bg-white/[0.03] text-xs font-semibold text-gray-800 dark:text-neutral-200">
+        <Building2 size={14} className="text-emerald-600 dark:text-emerald-400" />
+        <span className="max-w-[160px] truncate">{currentWorkspace.name}</span>
+        <span className="px-1.5 py-0.5 rounded text-[9px] font-mono uppercase bg-gray-100 dark:bg-white/10 text-gray-600 dark:text-neutral-400">
+          {currentWorkspace.type}
+        </span>
+      </div>
+    );
+  }
+
+  // Multi-workspace tenant: interactive context switcher
   return (
     <div className="relative">
       <button
@@ -19,13 +49,13 @@ export default function WorkspaceSwitcher() {
         <span className="px-1.5 py-0.5 rounded text-[9px] font-mono uppercase bg-gray-100 dark:bg-white/10 text-gray-600 dark:text-neutral-400">
           {currentWorkspace.type}
         </span>
-        <ChevronDown size={13} className="text-gray-400" />
+        <ChevronDown size={13} className={`text-gray-400 transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`} />
       </button>
 
       {isOpen && (
-        <div className="absolute left-0 mt-2 w-64 bg-white dark:bg-[#0f0f11] border border-gray-200 dark:border-white/10 rounded-2xl shadow-xl z-50 p-1.5 space-y-1">
+        <div className="absolute left-0 mt-2 w-64 bg-white dark:bg-[#0f0f11] border border-gray-200 dark:border-white/10 rounded-2xl shadow-xl z-50 p-1.5 space-y-1 animate-in fade-in zoom-in-95 duration-150">
           <div className="px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-gray-400">
-            Available Workspaces
+            Switch Campus / Workspace
           </div>
           {availableWorkspaces.map((ws) => (
             <button
@@ -44,7 +74,7 @@ export default function WorkspaceSwitcher() {
                 <div className="font-semibold">{ws.name}</div>
                 <div className="text-[10px] text-gray-400 uppercase font-mono">{ws.type} Mode</div>
               </div>
-              {currentWorkspace.orgId === ws.orgId && <Check size={14} />}
+              {currentWorkspace.orgId === ws.orgId && <Check size={14} className="text-emerald-600 dark:text-emerald-400" />}
             </button>
           ))}
         </div>

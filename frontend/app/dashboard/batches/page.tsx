@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useLanguage } from "@/components/providers";
-import { safeFetch } from "@/lib/apiClient";
+import { safeFetch, fetchWithTenant } from "@/lib/api-client";
 import { 
   Users, Plus, Clock, Calendar, BookOpen, 
   CheckCircle2, AlertCircle, Loader2, X, GraduationCap 
@@ -51,10 +51,7 @@ export default function BatchesManagementPage() {
   const fetchPrograms = async () => {
     setLoading(true);
     try {
-      const token = localStorage.getItem("token");
-      const { data } = await safeFetch<ProgramItem[]>("http://127.0.0.1:8000/api/v1/academy/programs", {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const { data } = await safeFetch<ProgramItem[]>("/api/v1/academy/programs");
       if (data) setPrograms(data);
     } catch (err) {
       console.error(err);
@@ -70,10 +67,8 @@ export default function BatchesManagementPage() {
   const handleCreateProgram = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const token = localStorage.getItem("token");
-      const res = await fetch("http://127.0.0.1:8000/api/v1/academy/programs", {
+      const res = await fetchWithTenant("/api/v1/academy/programs", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           name: progName,
           target_exam: targetExam,
@@ -95,10 +90,8 @@ export default function BatchesManagementPage() {
   const handleCreateBatch = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const token = localStorage.getItem("token");
-      const res = await fetch("http://127.0.0.1:8000/api/v1/academy/batches", {
+      const res = await fetchWithTenant("/api/v1/academy/batches", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           program_id: selectedProgramId,
           batch_name: batchName,
@@ -170,7 +163,7 @@ export default function BatchesManagementPage() {
 
                 <button
                   onClick={() => { setSelectedProgramId(prog.id); setShowBatchModal(true); }}
-                  className="px-3 py-1.5 rounded-xl border border-gray-200 dark:border-white/10 hover:bg-gray-100 dark:hover:bg-white/5 text-xs font-semibold flex items-center gap-1 text-gray-700 dark:text-gray-300"
+                  className="px-3 py-1.5 rounded-xl border border-gray-200 dark:border-white/10 hover:bg-gray-100 dark:hover:bg-white/5 text-xs font-semibold flex items-center gap-1 text-gray-700 dark:text-gray-400"
                 >
                   <Plus size={14} /> Add Shift Batch
                 </button>
@@ -215,7 +208,7 @@ export default function BatchesManagementPage() {
             </div>
             <form onSubmit={handleCreateProgram} className="space-y-3 text-xs">
               <div>
-                <label className="font-semibold text-gray-600 dark:text-gray-300">Program Name *</label>
+                <label className="font-semibold text-gray-600 dark:text-gray-400">Program Name *</label>
                 <input
                   required
                   value={progName}
@@ -225,7 +218,7 @@ export default function BatchesManagementPage() {
                 />
               </div>
               <div>
-                <label className="font-semibold text-gray-600 dark:text-gray-300">Target Exam / Goal *</label>
+                <label className="font-semibold text-gray-600 dark:text-gray-400">Target Exam / Goal *</label>
                 <input
                   required
                   value={targetExam}
@@ -236,7 +229,7 @@ export default function BatchesManagementPage() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="font-semibold text-gray-600 dark:text-gray-300">Course Fee (BDT) *</label>
+                  <label className="font-semibold text-gray-600 dark:text-gray-400">Course Fee (BDT) *</label>
                   <input
                     type="number"
                     required
@@ -246,7 +239,7 @@ export default function BatchesManagementPage() {
                   />
                 </div>
                 <div>
-                  <label className="font-semibold text-gray-600 dark:text-gray-300">Duration (Months)</label>
+                  <label className="font-semibold text-gray-600 dark:text-gray-400">Duration (Months)</label>
                   <input
                     type="number"
                     value={durationMonths}
@@ -274,7 +267,7 @@ export default function BatchesManagementPage() {
             </div>
             <form onSubmit={handleCreateBatch} className="space-y-3 text-xs">
               <div>
-                <label className="font-semibold text-gray-600 dark:text-gray-300">Batch Name *</label>
+                <label className="font-semibold text-gray-600 dark:text-gray-400">Batch Name *</label>
                 <input
                   required
                   value={batchName}
@@ -284,7 +277,7 @@ export default function BatchesManagementPage() {
                 />
               </div>
               <div>
-                <label className="font-semibold text-gray-600 dark:text-gray-300">Shift Timing *</label>
+                <label className="font-semibold text-gray-600 dark:text-gray-400">Shift Timing *</label>
                 <input
                   required
                   value={shiftTime}
@@ -295,7 +288,7 @@ export default function BatchesManagementPage() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="font-semibold text-gray-600 dark:text-gray-300">Schedule Days *</label>
+                  <label className="font-semibold text-gray-600 dark:text-gray-400">Schedule Days *</label>
                   <input
                     required
                     value={schedule}
@@ -305,7 +298,7 @@ export default function BatchesManagementPage() {
                   />
                 </div>
                 <div>
-                  <label className="font-semibold text-gray-600 dark:text-gray-300">Seat Capacity *</label>
+                  <label className="font-semibold text-gray-600 dark:text-gray-400">Seat Capacity *</label>
                   <input
                     type="number"
                     required

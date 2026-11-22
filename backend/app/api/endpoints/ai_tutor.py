@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from app.api.deps import get_db, get_current_user_claims, require_roles
 from app.services.rate_limiter import RateLimiterService
 
-router = APIRouter(prefix="/ai", tags=["LearningOS & AI Studio"])
+router = APIRouter()
 
 class SocraticQueryPayload(BaseModel):
     subject: str

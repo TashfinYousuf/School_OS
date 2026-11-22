@@ -1,28 +1,43 @@
 # backend/app/models/approval.py
 import uuid
-from datetime import datetime
-from sqlalchemy import Column, String, DateTime
-from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.sql import func
+from datetime import datetime, timezone
+from typing import Optional
+from sqlalchemy import String, DateTime, Text, Index
+from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.orm import Mapped, mapped_column
 from app.models.base import Base
 
 class ApprovalTask(Base):
-    """
-    Action Center: Holds AI generated tasks that require Human Approval.
-    """
     __tablename__ = "approval_tasks"
+    __table_args__ = (
+        Index("ix_approval_tasks_tenant_status", "tenant_id", "status"),
+        {'extend_existing': True}
+    )
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
-    tenant_id = Column(String, index=True, nullable=False)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, index=True)
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     
-    title = Column(String, index=True, nullable=False)
-    action_type = Column(String, nullable=False)
+    # Task metadata & approval workflow
+    task_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True) # e.g. "RESULT_PUBLICATION", "FEE_ADJUSTMENT"
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(String(50), default="Pending", nullable=False, index=True) # Pending, Approved, Rejected, Edited
     
-    # The actual content that the admin can EDIT before approving
-    payload_content = Column(String, nullable=False)
+    # Audit trail
+    requested_by_user_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    reviewed_by_user_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    review_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     
-    risk_level = Column(String, default="Medium", nullable=False) # Medium, High
-    status = Column(String, default="Pending", nullable=False) # Pending, Approved, Rejected, Edited
+    # Execution context payload
+    payload: Mapped[Optional[dict]] = mapped_column(JSONB, default=dict, nullable=True)
     
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    # Backwards compatibility with 63d9333ead59 schema and approvals endpoint
+    action_type: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    payload_content: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    risk_level: Mapped[Optional[str]] = mapped_column(String(32), default="Medium", nullable=True)
+    
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=False)
+
+# 🚀 Dual-Export Alias: Resolves ApprovalRequest import error across all endpoints
+ApprovalRequest = ApprovalTask

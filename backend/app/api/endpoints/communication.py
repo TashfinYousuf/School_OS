@@ -1,26 +1,33 @@
+import hmac
+import os
 import uuid
 import datetime
+import re
+
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from google import genai
 from google.genai import types
 
-from app.core.database import get_db
 from app.core.config import settings
-from app.api.deps import get_current_tenant_id, require_roles
+from app.api.deps import get_db, get_current_tenant_id, get_current_user_claims, require_roles
 from app.models.communication import Message
 from app.models.guardian import Guardian, GuardianStudentLink
 from app.models.student import Student
+from app.models.tenant import User
 
 router = APIRouter()
 
-clean_api_key = settings.GEMINI_API_KEY.strip().strip('"').strip("'")
-ai_client = genai.Client(api_key=clean_api_key)
+from app.core.ai_client import ai_client
 
 class ReplyPayload(BaseModel):
     reply_content: str
+
+class InquiryPayload(BaseModel):
+    content: str
+    category: Optional[str] = "General Inquiry"
 
 class MessageResponse(BaseModel):
     id: uuid.UUID
@@ -34,8 +41,7 @@ class MessageResponse(BaseModel):
     created_at: datetime.datetime
     student_meta: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 # --- 1. WhatsApp Webhook Verification (Meta / Cloud API Standard) ---
 @router.get("/webhook/whatsapp")
@@ -44,8 +50,10 @@ def verify_whatsapp_webhook(
     hub_challenge: Optional[str] = Query(None, alias="hub.challenge"),
     hub_verify_token: Optional[str] = Query(None, alias="hub.verify_token")
 ):
-    VERIFY_TOKEN = "schoolos_kids_shine_secure_2026"
-    if hub_mode == "subscribe" and hub_verify_token == VERIFY_TOKEN:
+    verify_token = os.getenv("WHATSAPP_VERIFY_TOKEN", "").strip()
+    if not verify_token:
+        raise HTTPException(status_code=503, detail="WhatsApp webhook verification token is not configured.")
+    if hub_mode == "subscribe" and hub_verify_token and hmac.compare_digest(hub_verify_token, verify_token):
         return int(hub_challenge)
     raise HTTPException(status_code=403, detail="Verification token mismatch")
 
@@ -77,21 +85,29 @@ async def receive_whatsapp_inbound(request: Request, db: Session = Depends(get_d
     if not message_text or not phone_number:
         return {"status": "ignored", "reason": "empty content"}
 
-    # Dynamic tenant & student resolution by sender phone
-    clean_phone = phone_number[-11:] # Last 11 digits (e.g. 017XXXXXXXX)
-    guardian = db.query(Guardian).filter(Guardian.phone_number.like(f"%{clean_phone}%")).first()
-    
-    tenant_id = guardian.tenant_id if guardian else "1dcd99ff-0c62-4a45-a6d9-a06a6b5b3b31"
-    sender_display = f"+88{clean_phone} (Guardian)"
-    student_meta = "Unregistered Guardian"
+    # Dynamic tenant & student resolution strictly from verified guardian phone (no hardcoded tenant fallback)
+    clean_phone = re.sub(r'\D', '', phone_number)[-11:]
+    if len(clean_phone) < 10:
+        return {"status": "ignored", "reason": "invalid_sender_phone"}
 
-    if guardian:
-        link = db.query(GuardianStudentLink).filter(GuardianStudentLink.guardian_id == guardian.id).first()
-        if link:
-            st = db.query(Student).filter(Student.id == link.student_id).first()
-            if st:
-                student_meta = f"Student: {st.first_name} {st.last_name} ({st.class_name} • ID: {st.admission_number})"
-                sender_display = f"{guardian.first_name} {guardian.last_name} ({clean_phone})"
+    guardian = db.query(Guardian).filter(Guardian.phone_number.endswith(clean_phone)).first()
+    if not guardian:
+        return {"status": "ignored", "reason": "unregistered_guardian_sender"}
+
+    tenant_id = guardian.tenant_id
+    sender_display = f"+88{clean_phone} (Guardian)"
+    student_meta = "Unlinked Guardian"
+
+    link = db.query(GuardianStudentLink).filter(
+        GuardianStudentLink.guardian_id == guardian.id,
+        GuardianStudentLink.tenant_id == str(tenant_id),
+        GuardianStudentLink.verification_status == "VERIFIED",
+    ).first()
+    if link:
+        st = db.query(Student).filter(Student.id == link.student_id, Student.tenant_id == str(tenant_id)).first()
+        if st:
+            student_meta = f"Student: {st.first_name} {st.last_name} ({st.class_name} • ID: {st.admission_number})"
+            sender_display = f"{guardian.first_name} {guardian.last_name} ({clean_phone})"
 
     # Real AI Analysis (Intent, Risk, Empathetic Bangla Draft)
     system_instruction = (
@@ -150,14 +166,22 @@ def get_inbox_messages(
 
     output = []
     for m in messages:
-        # Attach dynamic student metadata
+        # Attach dynamic student metadata strictly within tenant scope (F1)
         clean_p = m.sender_info.split("(")[-1].replace(")", "").strip()
-        g = db.query(Guardian).filter(Guardian.phone_number.like(f"%{clean_p}%")).first()
+        clean_digits = re.sub(r'\D', '', clean_p)[-11:]
+        g = db.query(Guardian).filter(
+            Guardian.tenant_id == str(tenant_id),
+            Guardian.phone_number.endswith(clean_digits)
+        ).first()
         meta = "Student Unlinked"
         if g:
-            link = db.query(GuardianStudentLink).filter(GuardianStudentLink.guardian_id == g.id).first()
+            link = db.query(GuardianStudentLink).filter(
+                GuardianStudentLink.guardian_id == g.id,
+                GuardianStudentLink.tenant_id == str(tenant_id),
+                GuardianStudentLink.verification_status == "VERIFIED",
+            ).first()
             if link:
-                s = db.query(Student).filter(Student.id == link.student_id).first()
+                s = db.query(Student).filter(Student.id == link.student_id, Student.tenant_id == str(tenant_id)).first()
                 if s:
                     meta = f"{s.first_name} {s.last_name} ({s.class_name} • Roll: {s.roll_number or '—'})"
 
@@ -193,3 +217,138 @@ def reply_to_guardian(
     msg.risk_level = "Low"
     db.commit()
     return {"message": "Reply recorded and thread resolved", "id": msg.id}
+
+
+# --- 5. Guardian & Student Self-Service Inquiries ---
+@router.get("/my-inquiries", response_model=List[MessageResponse])
+def get_my_inquiries(
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_current_tenant_id),
+    claims: dict = Depends(get_current_user_claims)
+):
+    user_id = str(claims.get("user_id") or "")
+    user = None
+    if user_id:
+        try:
+            user_uuid = uuid.UUID(user_id)
+            user = db.query(User).filter(User.id == user_uuid).first()
+        except ValueError:
+            pass
+
+    identifier = (user.email or user.username) if user else user_id
+    
+    messages = []
+    if identifier:
+        messages = db.query(Message).filter(
+            Message.tenant_id == str(tenant_id),
+            Message.sender_info.contains(identifier)
+        ).order_by(Message.created_at.desc()).all()
+    
+    return [
+        MessageResponse(
+            id=m.id,
+            channel=m.channel or "Portal Inquiry",
+            sender_info=m.sender_info or "Me",
+            content=m.content,
+            intent=m.intent,
+            ai_draft=m.ai_draft,
+            risk_level=m.risk_level or "Low",
+            status=m.status or "Pending",
+            created_at=m.created_at or datetime.datetime.now(datetime.timezone.utc),
+            student_meta=None
+        )
+        for m in messages
+    ]
+
+
+@router.post("/submit-inquiry", status_code=status.HTTP_201_CREATED)
+def submit_inquiry(
+    payload: InquiryPayload,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_current_tenant_id),
+    claims: dict = Depends(get_current_user_claims)
+):
+    user_id = str(claims.get("user_id") or "")
+    user = None
+    if user_id:
+        try:
+            user_uuid = uuid.UUID(user_id)
+            user = db.query(User).filter(User.id == user_uuid).first()
+        except ValueError:
+            pass
+
+    name = f"{user.first_name} {user.last_name}".strip() if user else "Portal User"
+    sender_display = f"{name} ({user.email or user.username or user_id})" if user else f"User ({user_id})"
+
+    new_msg = Message(
+        tenant_id=str(tenant_id),
+        channel="Portal Helpdesk",
+        sender_info=sender_display,
+        content=payload.content.strip(),
+        intent=payload.category,
+        ai_draft=None,
+        risk_level="Low",
+        status="Pending"
+    )
+    db.add(new_msg)
+    db.commit()
+    db.refresh(new_msg)
+    return {"status": "submitted", "id": str(new_msg.id), "message": "Inquiry submitted to school administration."}
+
+
+# --- 6. Truthful Notification Provider Gateway Endpoints ---
+class DispatchSmsPayload(BaseModel):
+    recipient_phone: str
+    message: str
+
+
+class DispatchEmailPayload(BaseModel):
+    recipient_email: str
+    subject: str
+    html_content: str
+    text_content: Optional[str] = None
+
+
+@router.get("/providers/status")
+def get_providers_configuration_status(
+    claims: dict = Depends(require_roles(["admin", "superadmin"]))
+):
+    """
+    Returns live configuration and readiness status of Email, SMS, and WhatsApp providers.
+    Guarantees truthful reporting (NOT_CONFIGURED if credentials are missing).
+    """
+    from app.services.communication_providers import get_communications_health
+    return get_communications_health()
+
+
+@router.post("/dispatch-sms")
+def dispatch_sms_notification(
+    payload: DispatchSmsPayload,
+    claims: dict = Depends(require_roles(["admin", "superadmin"]))
+):
+    """
+    Dispatches an SMS notification to parents/students via configured gateway.
+    Returns truthful DeliveryResult (SENT, NOT_CONFIGURED, or FAILED).
+    """
+    from app.services.communication_providers import sms_provider
+    result = sms_provider.send_sms(to_phone=payload.recipient_phone, message=payload.message)
+    return result.to_dict()
+
+
+@router.post("/dispatch-email")
+def dispatch_email_notification(
+    payload: DispatchEmailPayload,
+    claims: dict = Depends(require_roles(["admin", "superadmin"]))
+):
+    """
+    Dispatches an Email notification via configured SMTP server.
+    Returns truthful DeliveryResult (SENT, NOT_CONFIGURED, or FAILED).
+    """
+    from app.services.communication_providers import email_provider
+    result = email_provider.send_email(
+        to_email=payload.recipient_email,
+        subject=payload.subject,
+        html_body=payload.html_content,
+        text_body=payload.text_content
+    )
+    return result.to_dict()

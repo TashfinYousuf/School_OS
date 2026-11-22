@@ -33,18 +33,25 @@ class StudentAttendanceItem(BaseModel):
     status: str = Field(..., pattern="^(Present|Absent|Late|Excused)$")
     remarks: Optional[str] = None
     idempotency_key: Optional[str] = Field(None, max_length=128)
+    period_number: Optional[str] = "DAILY"
+    subject: Optional[str] = None
 
 class BulkAttendancePayload(BaseModel):
     attendance_date: date
     class_name: str
-    records: List[StudentAttendanceItem]
+    section: Optional[str] = "A"
+    period_number: Optional[str] = "DAILY"
+    subject: Optional[str] = None
+    records: List[StudentAttendanceItem] = Field(..., max_length=500)
 
 class AttendanceSheetStudent(BaseModel):
     id: UUID
     first_name: str
     last_name: str
+    name_bn: Optional[str] = None
     admission_number: str
     roll_number: Optional[str]
+    section: Optional[str] = "A"
     status: str
 
     model_config = ConfigDict(from_attributes=True)

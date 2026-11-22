@@ -1,16 +1,18 @@
 # backend/app/api/endpoints/approval.py
+import uuid
+import os
+
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-import uuid
 
 from app.models.approval import ApprovalTask
 from app.models.audit import AuditLog
 from app.schemas.approval import ApprovalTaskResponse, ApprovalTaskUpdate, ApprovalTaskCreate
-from app.core.database import get_db
-from app.api.deps import get_current_tenant_id, require_roles
+from app.api.deps import get_db, get_current_tenant_id, require_roles
+from app.services.institution import get_institution_profile
 
-router = APIRouter(prefix="/approvals", tags=["Action Center & Approvals"])
+router = APIRouter()
 
 @router.get("/", response_model=List[ApprovalTaskResponse])
 def get_pending_tasks(
@@ -73,18 +75,24 @@ def resolve_task(
 @router.post("/demo", response_model=ApprovalTaskResponse, status_code=status.HTTP_201_CREATED)
 def create_demo_task(
     db: Session = Depends(get_db),
-    tenant_id: str = Depends(get_current_tenant_id)
+    tenant_id: str = Depends(get_current_tenant_id),
+    _=Depends(require_roles(["admin"])),
 ):
-    """Demo endpoint to generate a fake AI task for frontend UI testing."""
+    """Demo endpoint to generate a sample AI task for frontend UI testing."""
+    if os.getenv("APP_ENV", "dev").lower() in {"prod", "production"}:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    school_name = get_institution_profile(db, tenant_id).name
     demo_task = ApprovalTask(
-        tenant_id=tenant_id,
+        tenant_id=str(tenant_id),
         title="Draft Notice: Unpaid Tuition Reminder",
         action_type="notice.draft",
-        payload_content="Dear Parent,\nThis is a gentle reminder that the tuition fee for the current semester is overdue. Please process the payment by next week.\n\nRegards,\nKids Shine Academy.",
+        payload_content=(
+            "Dear Parent,\n"
+            "This is a gentle reminder that the tuition fee for the current semester is overdue. "
+            "Please process the payment by next week.\n\n"
+            f"Regards,\n{school_name}."
+        ),
         risk_level="Medium",
-        status="Pending"
+        status="Pending",
     )
-    db.add(demo_task)
-    db.commit()
-    db.refresh(demo_task)
-    return demo_task

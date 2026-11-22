@@ -1,70 +1,66 @@
+// frontend/lib/offlineQueue.ts
+// Stage 11: Bridged to Durable IndexedDB MutationQueue & SyncCoordinator
+
+import { mutationQueue } from "./offline/mutation-queue.ts";
+import { syncCoordinator } from "./offline/sync-coordinator.ts";
+
 export interface QueuedAttendanceSubmission {
-  queueId: string;
+  queueId?: string;
   className: string;
   attendanceDate: string;
   records: Array<{
     student_id: string;
     status: string;
     remarks?: string;
-    idempotency_key: string;
+    idempotency_key?: string;
   }>;
-  queuedAt: string;
+  queuedAt?: string;
 }
 
-const QUEUE_KEY = "eduos_attendance_offline_queue";
-
-export function getOfflineAttendanceQueue(): QueuedAttendanceSubmission[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = localStorage.getItem(QUEUE_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
+function getContext(): { tenantId: string; userId: string } {
+  if (typeof window === "undefined") {
+    return { tenantId: "global", userId: "anonymous" };
   }
+  const tenantId = localStorage.getItem("tenant_id") || "global";
+  const userId = localStorage.getItem("user_id") || "anonymous";
+  return { tenantId, userId };
 }
 
-export function saveToOfflineAttendanceQueue(payload: QueuedAttendanceSubmission): void {
-  const currentQueue = getOfflineAttendanceQueue();
-  // Filter out any duplicate queue for same class and date
-  const filtered = currentQueue.filter(
-    (q) => !(q.className === payload.className && q.attendanceDate === payload.attendanceDate)
-  );
-  filtered.push(payload);
-  localStorage.setItem(QUEUE_KEY, JSON.stringify(filtered));
-}
-
-export async function flushOfflineAttendanceQueue(token: string): Promise<number> {
-  const queue = getOfflineAttendanceQueue();
-  if (queue.length === 0) return 0;
-
-  let syncedCount = 0;
-  const remainingQueue: QueuedAttendanceSubmission[] = [];
-
-  for (const item of queue) {
-    try {
-      const res = await fetch("http://127.0.0.1:8000/api/v1/attendance/bulk-submit", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          class_name: item.className,
-          attendance_date: item.attendanceDate,
-          records: item.records
-        })
-      });
-
-      if (res.ok) {
-        syncedCount++;
-      } else {
-        remainingQueue.push(item);
-      }
-    } catch {
-      remainingQueue.push(item);
+export async function saveToOfflineAttendanceQueue(payload: QueuedAttendanceSubmission): Promise<void> {
+  const { tenantId, userId } = getContext();
+  await mutationQueue.enqueue(
+    tenantId,
+    userId,
+    "ATTENDANCE_MARK",
+    `ATT_${payload.className}_${payload.attendanceDate}`,
+    {
+      date: payload.attendanceDate,
+      class_name: payload.className,
+      records: payload.records.map((r) => ({
+        student_id: r.student_id,
+        status: r.status,
+        notes: r.remarks,
+      })),
     }
-  }
+  );
+}
 
-  localStorage.setItem(QUEUE_KEY, JSON.stringify(remainingQueue));
-  return syncedCount;
+export async function getOfflineAttendanceQueue(): Promise<any[]> {
+  const { tenantId, userId } = getContext();
+  const pending = await mutationQueue.getPending(tenantId, userId);
+  return pending.map((m) => ({
+    queueId: m.idempotency_key,
+    className: m.payload.class_name,
+    attendanceDate: m.payload.date,
+    records: m.payload.records,
+    queuedAt: m.created_at,
+    syncStatus: m.sync_status,
+    retryCount: m.retry_count,
+  }));
+}
+
+export async function flushOfflineAttendanceQueue(): Promise<number> {
+  const { tenantId, userId } = getContext();
+  const result = await syncCoordinator.syncAll(tenantId, userId);
+  return result.synced;
 }

@@ -3,12 +3,14 @@
 import { useState, useEffect } from "react";
 import { useLanguage } from "@/components/providers";
 import { useWorkspace } from "@/lib/workspaceContext";
-import { safeFetch } from "@/lib/apiClient";
+import { safeFetch, fetchWithTenant } from "@/lib/api-client";
 import { 
   BookOpen, Sparkles, Clock, Printer, 
   CheckCircle2, Loader2, Trash2, Eye, School, GraduationCap
 } from "lucide-react";
 import Link from "next/link";
+import { useInstitution } from "@/lib/institution";
+import { useAcademicClasses } from "@/lib/useAcademicClasses";
 
 interface QuestionDraftItem {
   id: string;
@@ -41,6 +43,8 @@ interface SavedPaperSummary {
 
 export default function QuestionBankStudioPage() {
   const { language } = useLanguage();
+  const { name } = useInstitution();
+  const { classNames: availableClasses } = useAcademicClasses();
   const { currentWorkspace } = useWorkspace();
   const isAcademy = currentWorkspace?.type === "academy";
 
@@ -57,7 +61,7 @@ export default function QuestionBankStudioPage() {
 
   // 2. Exam Type / Assessment Standard
   const [assessmentType, setAssessmentType] = useState(
-    isAcademy ? "Engineering Admission Standard (Udvash Style)" : "NCTB Annual Assessment (বার্ষিক মূল্যায়ন)"
+    isAcademy ? "Engineering Admission Standard (Coaching Model)" : "NCTB Annual Assessment (বার্ষিক মূল্যায়ন)"
   );
 
   // 3. Subject (Custom typeable + suggestions)
@@ -78,7 +82,7 @@ export default function QuestionBankStudioPage() {
   useEffect(() => {
     if (isAcademy) {
       setTargetClass("HSC Care '26");
-      setAssessmentType("Engineering Admission Standard (Udvash Style)");
+      setAssessmentType("Engineering Admission Standard (Coaching Model)");
       setSubject("Physics 1st Paper");
       setTopic("");
     } else {
@@ -92,10 +96,7 @@ export default function QuestionBankStudioPage() {
   const fetchSavedPapers = async () => {
     setLoadingList(true);
     try {
-      const token = localStorage.getItem("token");
-      const { data } = await safeFetch<SavedPaperSummary[]>("http://127.0.0.1:8000/api/v1/question-papers/", {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const { data } = await safeFetch<SavedPaperSummary[]>("/api/v1/question-papers/");
       if (data) setSavedPapers(data);
     } finally {
       setLoadingList(false);
@@ -114,13 +115,8 @@ export default function QuestionBankStudioPage() {
     const programContext = `${targetClass} • ${assessmentType}`;
 
     try {
-      const token = localStorage.getItem("token");
-      const res = await fetch("http://127.0.0.1:8000/api/v1/question-papers/generate", {
+      const res = await fetchWithTenant("/api/v1/question-papers/generate", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`
-        },
         body: JSON.stringify({
           subject: subject.trim(),
           topic: topic.trim() || "General Syllabus Assessment",
@@ -149,10 +145,7 @@ export default function QuestionBankStudioPage() {
 
   const loadSavedPaperDraft = async (paperId: string) => {
     try {
-      const token = localStorage.getItem("token");
-      const res = await fetch(`http://127.0.0.1:8000/api/v1/question-papers/${paperId}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const res = await fetchWithTenant(`/api/v1/question-papers/${paperId}`);
       if (res.ok) {
         const data = await res.json();
         setActiveDraft(data);
@@ -168,10 +161,8 @@ export default function QuestionBankStudioPage() {
     if (!confirm(language === "EN" ? "Delete this saved question draft?" : "এই সংরক্ষিত প্রশ্নপত্রটি মুছে ফেলতে চান?")) return;
 
     try {
-      const token = localStorage.getItem("token");
-      const res = await fetch(`http://127.0.0.1:8000/api/v1/question-papers/${paperId}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` }
+      const res = await fetchWithTenant(`/api/v1/question-papers/${paperId}`, {
+        method: "DELETE"
       });
       if (res.ok) {
         if (activeDraft?.id === paperId) setActiveDraft(null);
@@ -196,8 +187,8 @@ export default function QuestionBankStudioPage() {
           </h1>
           <p className="text-xs text-gray-500 mt-1">
             {isAcademy
-              ? "Udvash / Retina admission standard question generator and official A4 paper builder."
-              : "Kids Shine International School NCTB curriculum assessment and printable A4 question papers."}
+              ? "Admission standard question generator and official A4 paper builder."
+              : `${name} NCTB curriculum assessment and printable A4 question papers.`}
           </p>
         </div>
 
@@ -238,7 +229,7 @@ export default function QuestionBankStudioPage() {
           {/* Row 1: Target Class & Assessment Standard */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
             <div>
-              <label className="font-semibold text-gray-700 dark:text-gray-300">
+              <label className="font-semibold text-gray-700 dark:text-gray-400">
                 {isAcademy ? "প্রোগ্রাম বা ব্যাচ (Target Program / Batch) *" : "শ্রেণি স্তর (Grade / Class Level) *"}
               </label>
               <input
@@ -260,21 +251,16 @@ export default function QuestionBankStudioPage() {
                   </>
                 ) : (
                   <>
-                    <option value="Play" />
-                    <option value="Nursery" />
-                    <option value="KG" />
-                    <option value="Class 1" />
-                    <option value="Class 2" />
-                    <option value="Class 3" />
-                    <option value="Class 4" />
-                    <option value="Class 5" />
+                    {availableClasses.map((cls) => (
+                      <option key={cls} value={cls} />
+                    ))}
                   </>
                 )}
               </datalist>
             </div>
 
             <div>
-              <label className="font-semibold text-gray-700 dark:text-gray-300">
+              <label className="font-semibold text-gray-700 dark:text-gray-400">
                 {isAcademy ? "মূল্যায়নের ধরন ও স্ট্যান্ডার্ড (Standard)" : "পরীক্ষার ধরন (Examination Type)"}
               </label>
               <select
@@ -284,7 +270,7 @@ export default function QuestionBankStudioPage() {
               >
                 {isAcademy ? (
                   <>
-                    <option value="Engineering Admission Standard (Udvash Style)">Engineering Admission Standard (Udvash Style)</option>
+                    <option value="Engineering Admission Standard (Coaching Model)">Engineering Admission Standard (Coaching Model)</option>
                     <option value="Medical Admission Standard (Retina Style)">Medical Admission Standard (Retina Style)</option>
                     <option value="Varsity 'KA' Admission Standard (Focus Style)">Varsity 'KA' Admission Standard (Focus Style)</option>
                     <option value="HSC Board Model Assessment">HSC Board Model Assessment</option>
@@ -304,7 +290,7 @@ export default function QuestionBankStudioPage() {
           {/* Row 2: Subject & Chapter/Topic */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
             <div>
-              <label className="font-semibold text-gray-700 dark:text-gray-300">
+              <label className="font-semibold text-gray-700 dark:text-gray-400">
                 বিষয় (Type or Select Subject) *
               </label>
               <input
@@ -339,7 +325,7 @@ export default function QuestionBankStudioPage() {
             </div>
 
             <div>
-              <label className="font-semibold text-gray-700 dark:text-gray-300">
+              <label className="font-semibold text-gray-700 dark:text-gray-400">
                 অধ্যায় বা সুনির্দিষ্ট পাঠ (Chapter / Topic) *
               </label>
               <input
@@ -355,7 +341,7 @@ export default function QuestionBankStudioPage() {
           {/* Row 3: Questions Count, Duration & Generate Button */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 items-end pt-1">
             <div>
-              <label className="font-semibold text-gray-700 dark:text-gray-300">Question Count</label>
+              <label className="font-semibold text-gray-700 dark:text-gray-400">Question Count</label>
               <select
                 value={questionCount}
                 onChange={(e) => setQuestionCount(e.target.value)}
@@ -369,7 +355,7 @@ export default function QuestionBankStudioPage() {
             </div>
 
             <div>
-              <label className="font-semibold text-gray-700 dark:text-gray-300">Time (Minutes)</label>
+              <label className="font-semibold text-gray-700 dark:text-gray-400">Time (Minutes)</label>
               <input
                 type="number"
                 value={duration}
@@ -408,7 +394,7 @@ export default function QuestionBankStudioPage() {
               <button
                 type="button"
                 onClick={() => setShowAnswerKey(!showAnswerKey)}
-                className="px-3.5 py-1.5 bg-gray-100 dark:bg-white/5 hover:bg-gray-200 dark:hover:bg-white/10 rounded-xl text-xs font-semibold text-gray-700 dark:text-gray-300 flex items-center gap-1.5 transition-all"
+                className="px-3.5 py-1.5 bg-gray-100 dark:bg-white/5 hover:bg-gray-200 dark:hover:bg-white/10 rounded-xl text-xs font-semibold text-gray-700 dark:text-gray-400 flex items-center gap-1.5 transition-all"
               >
                 <CheckCircle2 className={showAnswerKey ? "text-emerald-500" : "text-gray-400"} size={14} />
                 <span>{showAnswerKey ? "Hide Solutions" : "Show Answer Key"}</span>

@@ -75,16 +75,32 @@ class SecurityOwnershipGuard:
             return True
 
         if role == "guardian":
-            guardian_phone = getattr(student, "guardian_phone", None)
-            from app.models.users import User
-            guardian_user = db.query(User).filter(User.id == current_user_id).first()
-            if not guardian_user or guardian_user.phone != guardian_phone:
+            from app.models.guardian import Guardian, GuardianStudentLink
+            import uuid
+            try:
+                cuid = uuid.UUID(str(current_user_id))
+            except (ValueError, TypeError):
+                cuid = None
+
+            link = db.query(GuardianStudentLink).join(
+                Guardian, Guardian.id == GuardianStudentLink.guardian_id
+            ).filter(
+                (Guardian.user_id == cuid) | (Guardian.id == cuid),
+                GuardianStudentLink.student_id == student.id,
+                GuardianStudentLink.verification_status == "VERIFIED",
+                GuardianStudentLink.tenant_id == str(student.tenant_id)
+            ).first()
+
+            if not link:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Access restricted: You are not authorized to view this student's records."
                 )
             return True
 
-        return True
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access restricted: Your role is not authorized to access student records."
+        )
 
 security_guard = SecurityOwnershipGuard()

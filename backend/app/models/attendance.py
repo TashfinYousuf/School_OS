@@ -23,6 +23,11 @@ class AttendanceEvent(Base):
     # Core Data
     date = Column(Date, default=func.current_date(), index=True, nullable=False)
     status = Column(String, nullable=False) # "Present", "Absent", "Late", "Excused"
+    period_number = Column(String(32), default="DAILY", nullable=True, index=True) # "DAILY", "Period 1", etc.
+    subject = Column(String(100), nullable=True, index=True)
+    shift = Column(String(50), nullable=True, default="Morning")
+    section = Column(String(50), nullable=True, default="A")
+    group = Column(String(50), nullable=True) # "Science", "Humanities", "Business Studies"
     
     # IoT & Hardware Ready Fields (Vision 2030)
     check_in_time = Column(DateTime(timezone=True), default=func.now())
@@ -39,4 +44,7 @@ class AttendanceEvent(Base):
     __table_args__ = (
         # Ensures no duplicate offline sync runs for the same transaction key within a tenant
         UniqueConstraint('tenant_id', 'idempotency_key', name='uq_tenant_attendance_idempotency'),
+        # Ensures no duplicate attendance events for a student in the same period/day
+        UniqueConstraint("tenant_id", "student_id", "date", "period_number", name="uq_attendance_student_day_period"),
+        {'extend_existing': True}
     )

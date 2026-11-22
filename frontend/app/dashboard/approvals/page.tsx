@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { CheckCircle2, XCircle, AlertTriangle, Edit3, Loader2, Send } from "lucide-react";
 import { useLanguage } from "@/components/providers";
+import { fetchWithTenant } from "@/lib/api-client";
 
 export default function ApprovalsPage() {
   const { language } = useLanguage();
@@ -17,10 +18,7 @@ export default function ApprovalsPage() {
   const fetchTasks = async () => {
     setLoading(true);
     try {
-      const token = localStorage.getItem("token");
-      const res = await fetch("http://127.0.0.1:8000/api/v1/approvals/", {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const res = await fetchWithTenant("/api/v1/approvals/");
       if (res.ok) setTasks(await res.json());
     } finally {
       setLoading(false);
@@ -29,10 +27,8 @@ export default function ApprovalsPage() {
 
   // Helper function to create a demo task for testing
   const createDemoTask = async () => {
-    const token = localStorage.getItem("token");
-    await fetch("http://127.0.0.1:8000/api/v1/approvals/demo", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}` }
+    await fetchWithTenant("/api/v1/approvals/demo", {
+      method: "POST"
     });
     fetchTasks();
   };
@@ -43,10 +39,8 @@ export default function ApprovalsPage() {
     if (!selectedTask) return;
     setActionLoading(true);
     try {
-      const token = localStorage.getItem("token");
-      const res = await fetch(`http://127.0.0.1:8000/api/v1/approvals/${selectedTask.id}`, {
+      const res = await fetchWithTenant(`/api/v1/approvals/${selectedTask.id}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ payload_content: editedContent, status })
       });
       if (res.ok) {
@@ -72,7 +66,7 @@ export default function ApprovalsPage() {
         </div>
         
         {/* DEV BUTTON: Creates a fake task to test UI */}
-        <button onClick={createDemoTask} className="bg-gray-100 dark:bg-white/10 text-gray-700 dark:text-gray-300 px-4 py-2 rounded-xl text-sm font-medium hover:bg-gray-200 dark:hover:bg-white/20 transition-colors border border-gray-200 dark:border-white/10">
+        <button onClick={createDemoTask} className="bg-gray-100 dark:bg-white/10 text-gray-700 dark:text-gray-400 px-4 py-2 rounded-xl text-sm font-medium hover:bg-gray-200 dark:hover:bg-white/20 transition-colors border border-gray-200 dark:border-white/10">
           + Generate Demo Task
         </button>
       </div>

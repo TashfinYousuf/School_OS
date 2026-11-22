@@ -1,0 +1,63 @@
+{
+  "id": "/",
+  "name": "EducationOS - Institutional Operating System",
+  "short_name": "EducationOS",
+  "description": "Unified AI-Integrated Institutional Management for Schools and Coaching Centers.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#070709",
+  "theme_color": "#2563eb",
+  "lang": "en",
+  "dir": "ltr",
+  "categories": ["education", "productivity"],
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-maskable-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Dashboard",
+      "url": "/dashboard",
+      "description": "Open Institution Dashboard"
+    },
+    {
+      "name": "Smart Attendance",
+      "url": "/dashboard/attendance",
+      "description": "1-Tap Fast Classroom Roll Call"
+    },
+    {
+      "name": "Live Exams",
+      "url": "/dashboard/live-exams",
+      "description": "Online Assessment Portal"
+    },
+    {
+      "name": "Fee Ledger",
+      "url": "/dashboard/finance",
+      "description": "Tuition Fee Collection"
+    }
+  ]
+}

@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy import Column, String, Integer, Float, DateTime, ForeignKey, Boolean, JSON
+from sqlalchemy import Column, String, Integer, Float, DateTime, ForeignKey, Boolean, JSON, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 from app.models.base import Base
@@ -34,7 +34,10 @@ class ExamSubmission(Base):
     Real-time student paper evaluation, rank, and score ledger.
     """
     __tablename__ = "exam_submissions"
-    __table_args__ = {'extend_existing': True}
+    __table_args__ = (
+        UniqueConstraint("exam_id", "student_id", name="uq_one_attempt"),
+        {'extend_existing': True}
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id = Column(String(64), index=True, nullable=False)

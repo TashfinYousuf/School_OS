@@ -4,8 +4,7 @@ from sqlalchemy import or_
 from pydantic import BaseModel
 from typing import List
 
-from app.core.database import get_db
-from app.api.deps import get_current_tenant_id, require_roles
+from app.api.deps import get_db, get_current_tenant_id, require_roles
 from app.models.student import Student
 from app.models.users import Teacher
 

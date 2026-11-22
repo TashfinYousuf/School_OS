@@ -1,0 +1,2 @@
+# EducationOS CLI Package
+

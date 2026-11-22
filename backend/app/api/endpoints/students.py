@@ -6,19 +6,24 @@ from datetime import date, datetime
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
-from app.core.database import get_db
+from app.api.deps import get_db, get_current_tenant_id, require_roles, get_current_user, get_current_user_claims
+from app.models.tenant import User
 from app.core.security_guard import security_guard
-from app.api.deps import get_current_tenant_id, require_roles, get_current_user
 from app.models.student import Student
 from app.models.guardian import Guardian, GuardianStudentLink, GuardianRelationship
 from app.models.attendance import AttendanceEvent
 from app.models.result import StudentResult
-from app.models.finance import FeePayment
+from app.models.finance import FeePayment, Invoice
+from app.models.academic import ClassRoutine, StudentEnrollmentHistory
+from app.models.audit import AuditLog
+from app.core.identity import generate_student_uid
 from app.schemas.student import (
     StudentBulkImportRequest,
-    StudentBulkImportResponse
+    StudentBulkImportResponse,
+    StudentSelfUpdatePayload,
+    StudentSearchItem,
 )
 
 from typing import List, Callable, Dict, Any
@@ -43,7 +48,7 @@ class GuardianInput(BaseModel):
 class StudentAdmissionPayload(BaseModel):
     first_name: str
     last_name: str
-    admission_number: str
+    admission_number: Optional[str] = None
     class_name: str
     section: Optional[str] = "A"
     roll_number: Optional[str] = None
@@ -57,85 +62,53 @@ class StudentListItem(BaseModel):
     id: uuid.UUID
     first_name: str
     last_name: str
+    first_name_bn: Optional[str] = None
+    last_name_bn: Optional[str] = None
+    name_bn: Optional[str] = None
     admission_number: str
-    class_name: Optional[str]
-    roll_number: Optional[str]
-    guardian_name: Optional[str]
-    guardian_phone: Optional[str]
+    class_name: Optional[str] = None
+    section: Optional[str] = "A"
+    roll_number: Optional[str] = None
+    group: Optional[str] = None
+    shift: Optional[str] = "Morning"
+    academic_year: Optional[str] = "2026"
+    guardian_name: Optional[str] = None
+    guardian_phone: Optional[str] = None
     status: str
-    created_at: datetime
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class StudentUpdatePayload(BaseModel):
     first_name: Optional[str] = None
     last_name: Optional[str] = None
+    first_name_bn: Optional[str] = None
+    last_name_bn: Optional[str] = None
+    name_bn: Optional[str] = None
     class_name: Optional[str] = None
     section: Optional[str] = None
     roll_number: Optional[str] = None
+    group: Optional[str] = None
+    shift: Optional[str] = None
+    academic_year: Optional[str] = None
     gender: Optional[str] = None
     date_of_birth: Optional[date] = None
     blood_group: Optional[str] = None
     birth_certificate_no: Optional[str] = None
+    address: Optional[str] = None
+    emergency_contact: Optional[str] = None
+    previous_school: Optional[str] = None
+    photo_url: Optional[str] = None
+    disciplinary_notes: Optional[str] = None
+    health_notes: Optional[str] = None
     status: Optional[str] = None
 
+    # Guardian Contact Updates (Optional)
+    guardian_phone: Optional[str] = None
+    guardian_name: Optional[str] = None
+
 # --- Endpoints ---
-
-def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security_bearer)
-) -> Dict[str, Any]:
-    """Decodes JWT Bearer token and returns authenticated user metadata."""
-    if not credentials or not credentials.credentials:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication credentials missing."
-        )
-
-    token = credentials.credentials
-    try:
-        secret = getattr(settings, "JWT_SECRET_KEY", None) or getattr(settings, "SECRET_KEY", "educationos_secret_key_2026")
-        algorithm = getattr(settings, "JWT_ALGORITHM", "HS256")
-        payload = jwt.decode(token, secret, algorithms=[algorithm])
-
-        return {
-            "user_id": payload.get("user_id") or payload.get("sub"),
-            "tenant_id": payload.get("tenant_id") or "1dcd99ff-0c62-4a45-a6d9-a06a6b5b3b31",
-            "role": (payload.get("role") or "student").lower(),
-            "email": payload.get("email", "")
-        }
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Session expired. Please log in again."
-        )
-    except Exception:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authentication token."
-        )
-
-
-def get_current_tenant_id(
-    current_user: Dict[str, Any] = Depends(get_current_user)
-) -> str:
-    """Extracts tenant_id strictly bound to authenticated JWT."""
-    return str(current_user["tenant_id"])
-
-
-def require_roles(allowed_roles: List[str]) -> Callable:
-    """Enforces role-based access control (RBAC)."""
-    def role_checker(current_user: Dict[str, Any] = Depends(get_current_user)):
-        user_role = current_user.get("role", "").lower()
-        normalized_allowed = [r.lower() for r in allowed_roles]
-        if user_role not in normalized_allowed:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Operation restricted to roles: {', '.join(allowed_roles)}."
-            )
-        return current_user
-    return role_checker
-
 
 @router.get("/", response_model=List[StudentListItem])
 def list_students(
@@ -180,15 +153,102 @@ def list_students(
             "id": s.id,
             "first_name": s.first_name,
             "last_name": s.last_name,
+            "first_name_bn": getattr(s, "first_name_bn", None),
+            "last_name_bn": getattr(s, "last_name_bn", None),
+            "name_bn": getattr(s, "name_bn", None),
             "admission_number": s.admission_number,
             "class_name": s.class_name,
+            "section": getattr(s, "section", "A"),
             "roll_number": s.roll_number,
+            "group": getattr(s, "group", None),
+            "shift": getattr(s, "shift", "Morning"),
+            "academic_year": getattr(s, "academic_year", "2026"),
             "guardian_name": guardian_name,
             "guardian_phone": guardian_phone,
             "status": s.status,
             "created_at": s.created_at
         })
     return response
+
+
+@router.get("/search", response_model=List[StudentSearchItem])
+def search_students(
+    q: str = Query(..., min_length=1, max_length=100),
+    class_name: Optional[str] = None,
+    section: Optional[str] = None,
+    limit: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_current_tenant_id),
+    _=Depends(require_roles(["admin", "teacher", "finance_officer", "accountant"]))
+):
+    """
+    High-performance indexed student search for scalable fee collection, admissions, and 360 lookups.
+    Searches across English/Bengali names, admission numbers, roll numbers, and contact information.
+    """
+    tid = str(tenant_id)
+    term = f"%{q.strip()}%"
+
+    query = db.query(Student).filter(
+        Student.tenant_id == tid,
+        Student.status == "Active",
+        or_(
+            Student.first_name.ilike(term),
+            Student.last_name.ilike(term),
+            Student.name_bn.ilike(term),
+            Student.admission_number.ilike(term),
+            Student.roll_number.ilike(term),
+            Student.emergency_contact.ilike(term),
+        )
+    )
+
+    if class_name and class_name.lower() != "all":
+        query = query.filter(Student.class_name == class_name)
+    if section and section.lower() != "all":
+        query = query.filter(Student.section == section)
+
+    students = query.order_by(Student.roll_number.asc(), Student.admission_number.asc()).limit(limit).all()
+
+    results = []
+    for s in students:
+        link = db.query(GuardianStudentLink).filter(
+            GuardianStudentLink.student_id == s.id,
+            GuardianStudentLink.tenant_id == tid,
+            GuardianStudentLink.verification_status == "VERIFIED"
+        ).first()
+
+        g_name = None
+        g_phone = None
+        if link:
+            g = db.query(Guardian).filter(Guardian.id == link.guardian_id, Guardian.tenant_id == tid).first()
+            if g:
+                g_name = f"{g.first_name} {g.last_name}"
+                g_phone = g.phone_number
+
+        unpaid_invoices = db.query(Invoice).filter(
+            Invoice.student_id == str(s.id),
+            Invoice.tenant_id == tid,
+            Invoice.status.in_(["UNPAID", "PARTIALLY_PAID", "PENDING"])
+        ).all()
+        outstanding = float(sum(inv.total_amount for inv in unpaid_invoices)) if unpaid_invoices else 0.0
+
+        results.append(StudentSearchItem(
+            id=s.id,
+            first_name=s.first_name,
+            last_name=s.last_name,
+            name_bn=getattr(s, "name_bn", None),
+            admission_number=s.admission_number,
+            class_name=s.class_name,
+            section=getattr(s, "section", "A"),
+            roll_number=s.roll_number,
+            group=getattr(s, "group", None),
+            shift=getattr(s, "shift", "Morning"),
+            status=s.status,
+            guardian_name=g_name,
+            guardian_phone=g_phone,
+            outstanding_balance=outstanding
+        ))
+
+    return results
 
 @router.post("/admit", status_code=status.HTTP_201_CREATED)
 def admit_student(
@@ -197,15 +257,19 @@ def admit_student(
     tenant_id: str = Depends(get_current_tenant_id),
     _=Depends(require_roles(["admin"]))
 ):
-    existing_student = db.query(Student).filter(
-        Student.tenant_id == str(tenant_id),
-        Student.admission_number == payload.admission_number.strip()
-    ).first()
-    if existing_student:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Admission ID '{payload.admission_number}' already exists in this institution."
-        )
+    adm_no = (payload.admission_number or "").strip()
+    if not adm_no:
+        adm_no = generate_student_uid(db, str(tenant_id), class_name=payload.class_name)
+    else:
+        existing_student = db.query(Student).filter(
+            Student.tenant_id == str(tenant_id),
+            Student.admission_number == adm_no
+        ).first()
+        if existing_student:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Admission ID '{adm_no}' already exists in this institution."
+            )
 
     # 1. Guardian Handling
     clean_phone = payload.guardian.phone_number.strip()
@@ -231,7 +295,7 @@ def admit_student(
         tenant_id=str(tenant_id),
         first_name=payload.first_name,
         last_name=payload.last_name,
-        admission_number=payload.admission_number.strip(),
+        admission_number=adm_no,
         class_name=payload.class_name,
         section=payload.section,
         roll_number=payload.roll_number,
@@ -250,7 +314,9 @@ def admit_student(
         guardian_id=guardian.id,
         student_id=student.id,
         relationship_type=payload.guardian.relationship_type,
-        is_primary_contact="Yes"
+        verification_status="VERIFIED",
+        verification_method="ADMIN_ADMISSION",
+        is_primary_contact=True
     )
     db.add(link)
     db.commit()
@@ -274,18 +340,24 @@ def bulk_import_students(
     errors = []
 
     for item in payload.students:
-        adm = item.admission_number.strip()
-        existing = db.query(Student).filter(
-            Student.tenant_id == str(tenant_id),
-            Student.admission_number == adm
-        ).first()
+        adm = (item.admission_number or "").strip()
+        if not adm:
+            adm = generate_student_uid(db, str(tenant_id), item.academic_year, item.class_name)
+            item_dict = item.model_dump()
+            item_dict["admission_number"] = adm
+        else:
+            existing = db.query(Student).filter(
+                Student.tenant_id == str(tenant_id),
+                Student.admission_number == adm
+            ).first()
 
-        if existing:
-            skipped_count += 1
-            errors.append(f"Admission ID '{adm}' already registered (Skipped).")
-            continue
+            if existing:
+                skipped_count += 1
+                errors.append(f"Admission ID '{adm}' already registered (Skipped).")
+                continue
+            item_dict = item.model_dump()
 
-        student = Student(tenant_id=str(tenant_id), **item.model_dump())
+        student = Student(tenant_id=str(tenant_id), **item_dict)
         db.add(student)
         imported_count += 1
 
@@ -303,6 +375,7 @@ def update_student(
     payload: StudentUpdatePayload,
     db: Session = Depends(get_db),
     tenant_id: str = Depends(get_current_tenant_id),
+    current_user: User = Depends(get_current_user),
     _=Depends(require_roles(["admin"]))
 ):
     student = db.query(Student).filter(Student.id == student_id, Student.tenant_id == str(tenant_id)).first()
@@ -310,12 +383,94 @@ def update_student(
         raise HTTPException(status_code=404, detail="Student not found")
     
     update_data = payload.model_dump(exclude_unset=True)
-    for field, value in update_data.items():
-        setattr(student, field, value)
-        
+    diff = {}
+    
+    guardian_phone = update_data.pop("guardian_phone", None)
+    guardian_name = update_data.pop("guardian_name", None)
+
+    for field, new_val in update_data.items():
+        if hasattr(student, field):
+            old_val = getattr(student, field)
+            if old_val != new_val:
+                diff[field] = {"old": str(old_val), "new": str(new_val)}
+                setattr(student, field, new_val)
+
+    if guardian_phone or guardian_name:
+        link = db.query(GuardianStudentLink).filter(
+            GuardianStudentLink.student_id == student.id,
+            GuardianStudentLink.tenant_id == str(tenant_id),
+            GuardianStudentLink.verification_status == "VERIFIED"
+        ).first()
+        if link:
+            g = db.query(Guardian).filter(Guardian.id == link.guardian_id).first()
+            if g:
+                if guardian_phone and g.phone_number != guardian_phone:
+                    diff["guardian_phone"] = {"old": g.phone_number, "new": guardian_phone}
+                    g.phone_number = guardian_phone
+                if guardian_name and f"{g.first_name} {g.last_name}" != guardian_name:
+                    diff["guardian_name"] = {"old": f"{g.first_name} {g.last_name}", "new": guardian_name}
+                    parts = guardian_name.split(" ", 1)
+                    g.first_name = parts[0]
+                    g.last_name = parts[1] if len(parts) > 1 else ""
+
+    if diff:
+        audit_log = AuditLog(
+            tenant_id=str(tenant_id),
+            user_id=str(current_user.id) if current_user else None,
+            action="UPDATE_STUDENT",
+            entity="Student",
+            entity_id=str(student.id),
+            details={"diff": diff}
+        )
+        db.add(audit_log)
+
     db.commit()
     db.refresh(student)
-    return {"message": "Student updated successfully", "student": student}
+    return {"message": "Student updated successfully", "student": student, "diff": diff}
+
+
+@router.patch("/me/profile")
+def update_my_student_profile(
+    payload: StudentSelfUpdatePayload,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_current_tenant_id),
+    current_user: User = Depends(get_current_user),
+    _=Depends(require_roles(["student"]))
+):
+    """
+    Self-service endpoint for students to update allowed personal profile fields.
+    Strictly forbids modifications to admission number, class, marks, roll number, or status.
+    """
+    student = db.query(Student).filter(
+        Student.user_id == current_user.id,
+        Student.tenant_id == str(tenant_id)
+    ).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student profile not linked to active account")
+
+    update_data = payload.model_dump(exclude_unset=True)
+    diff = {}
+    for field, new_val in update_data.items():
+        if hasattr(student, field) and field in {"address", "emergency_contact", "blood_group", "photo_url"}:
+            old_val = getattr(student, field)
+            if old_val != new_val:
+                diff[field] = {"old": str(old_val), "new": str(new_val)}
+                setattr(student, field, new_val)
+
+    if diff:
+        audit_log = AuditLog(
+            tenant_id=str(tenant_id),
+            user_id=str(current_user.id),
+            action="STUDENT_SELF_UPDATE",
+            entity="Student",
+            entity_id=str(student.id),
+            details={"diff": diff}
+        )
+        db.add(audit_log)
+        db.commit()
+        db.refresh(student)
+
+    return {"message": "Profile updated successfully", "student": student}
 
 @router.delete("/{student_id}")
 def delete_student(
@@ -332,13 +487,137 @@ def delete_student(
     db.commit()
     return {"message": f"Student {student.admission_number} removed successfully"}
 
+
+@router.get("/me/dashboard")
+def get_my_student_dashboard(
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_current_tenant_id),
+    claims: dict = Depends(get_current_user_claims),
+):
+    """
+    Returns authentic dashboard data for the authenticated student:
+    - Personal student profile
+    - Real-time attendance percentage & today's roll status
+    - Term GPA and academic standing
+    - Today's assigned class routine/periods
+    """
+    tid = str(tenant_id)
+    user_role = (claims.get("role") or "").lower()
+    if user_role != "student":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Only enrolled students can access their personal dashboard."
+        )
+
+    user_id_str = str(claims.get("user_id", ""))
+    try:
+        user_uuid = uuid.UUID(user_id_str)
+    except (ValueError, TypeError):
+        user_uuid = None
+
+    student = db.query(Student).filter(
+        (Student.id == user_uuid) | (Student.user_id == user_uuid),
+        Student.tenant_id == tid
+    ).first()
+
+    if not student:
+        raise HTTPException(status_code=404, detail="Student profile not found for authenticated account.")
+
+    # 1. Attendance Metrics
+    today = date.today()
+    att_events = db.query(AttendanceEvent).filter(
+        AttendanceEvent.tenant_id == tid,
+        AttendanceEvent.student_id == student.id
+    ).all()
+
+    total_days = len(att_events)
+    present_days = sum(1 for e in att_events if (e.status or "").capitalize() == "Present")
+    absent_days = sum(1 for e in att_events if (e.status or "").capitalize() == "Absent")
+    late_days = sum(1 for e in att_events if (e.status or "").capitalize() == "Late")
+    half_days = sum(1 for e in att_events if "half" in (e.status or "").lower())
+    present_equiv = present_days + late_days + (half_days * 0.5)
+    rate = round((present_equiv / total_days * 100), 1) if total_days > 0 else 100.0
+
+    today_event = next((e for e in att_events if e.date == today), None)
+    today_status = today_event.status if today_event else "Not Marked"
+
+    # 2. Academic Standing
+    results = db.query(StudentResult).filter(
+        StudentResult.tenant_id == tid,
+        StudentResult.student_id == student.id
+    ).all()
+    avg_gpa = round(sum(r.grade_point for r in results) / len(results), 2) if results else 0.0
+    standing = "GPA 5.00 (A+)" if avg_gpa >= 5.0 else f"GPA {avg_gpa:.2f}" if avg_gpa > 0 else "Pending Evaluation"
+
+    # 3. Today's Class Routine
+    day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    current_day = day_names[today.weekday()]
+
+    routines = db.query(ClassRoutine).filter(
+        ClassRoutine.tenant_id == tid,
+        ClassRoutine.class_name == student.class_name,
+        ClassRoutine.day_of_week.ilike(current_day)
+    ).order_by(ClassRoutine.period_number.asc()).all()
+
+    periods_today = [
+        {
+            "period": r.period_number,
+            "subject": r.subject,
+            "start_time": r.start_time,
+            "end_time": r.end_time,
+            "teacher_name": r.teacher_name,
+            "room_number": r.room_number,
+        }
+        for r in routines
+    ]
+
+    return {
+        "student": {
+            "id": str(student.id),
+            "name": f"{student.first_name} {student.last_name}".strip(),
+            "first_name": student.first_name,
+            "last_name": student.last_name,
+            "admission_number": student.admission_number,
+            "class_name": student.class_name,
+            "section": student.section or "A",
+            "roll_number": student.roll_number or "—",
+            "status": student.status,
+        },
+        "attendance": {
+            "rate_percentage": rate,
+            "total_days": total_days,
+            "present_days": present_days,
+            "absent_days": absent_days,
+            "today_status": today_status,
+        },
+        "academics": {
+            "term_gpa": avg_gpa,
+            "standing": standing,
+            "subjects_evaluated": len(results),
+        },
+        "routine_today": {
+            "day": current_day,
+            "periods_count": len(periods_today),
+            "periods": periods_today,
+        }
+    }
+
+
 @router.get("/{student_id}/profile-360")
 def get_student_360_profile(
     student_id: uuid.UUID,
     db: Session = Depends(get_db),
     tenant_id: str = Depends(get_current_tenant_id),
-    _=Depends(require_roles(["admin", "teacher", "guardian"]))
+    current_user: User = Depends(get_current_user),
 ):
+    user_role = (current_user.role or "").lower()
+    allowed_roles = ["superadmin", "admin", "teacher", "guardian", "student"]
+    if user_role not in allowed_roles:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: insufficient permissions to view student profile"
+        )
+
     student = db.query(Student).filter(
         Student.id == student_id, 
         Student.tenant_id == str(tenant_id)
@@ -347,10 +626,42 @@ def get_student_360_profile(
     if not student:
         raise HTTPException(status_code=404, detail="Student record not found")
 
+    # Resource-level access control (IDOR / BOLA Guard)
+    if user_role == "guardian":
+        guardian = db.query(Guardian).filter(
+            (Guardian.id == current_user.id) | (Guardian.user_id == current_user.id),
+            Guardian.tenant_id == str(tenant_id)
+        ).first()
+
+        if not guardian:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied: No guardian profile associated with current user"
+            )
+
+        link = db.query(GuardianStudentLink).filter(
+            GuardianStudentLink.guardian_id == guardian.id,
+            GuardianStudentLink.student_id == student.id,
+            GuardianStudentLink.tenant_id == str(tenant_id),
+            GuardianStudentLink.verification_status == "VERIFIED",
+        ).first()
+        if not link:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied: You are not authorized to view this student's profile"
+            )
+    elif user_role == "student":
+        if student.user_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied: Students can only view their own profile"
+            )
+
     # 1. Primary Guardian
     link = db.query(GuardianStudentLink).filter(
         GuardianStudentLink.student_id == student.id,
-        GuardianStudentLink.tenant_id == str(tenant_id)
+        GuardianStudentLink.tenant_id == str(tenant_id),
+        GuardianStudentLink.verification_status == "VERIFIED",
     ).first()
     guardian = db.query(Guardian).filter(Guardian.id == link.guardian_id).first() if link else None
 
@@ -368,25 +679,43 @@ def get_student_360_profile(
     
     attendance_rate = round((present_days / total_days * 100), 1) if total_days > 0 else 100.0
 
-    # 3. Fee Payments Ledger (Safe Column Fallback)
+        # 3. Fee Payments Ledger (Safe Column Fallback)
     date_col = getattr(FeePayment, "payment_date", getattr(FeePayment, "created_at", FeePayment.id))
 
-    payments = db.query(FeePayment).filter(
-        FeePayment.tenant_id == str(tenant_id),
-        FeePayment.student_id == student.id
-    ).order_by(date_col.desc()).limit(5).all()
+    try:
+        payments = db.query(FeePayment).filter(
+            FeePayment.tenant_id == str(tenant_id),
+            FeePayment.student_id == student.id
+        ).order_by(date_col.desc()).limit(5).all()
+    except Exception:
+        db.rollback()
+        payments = []
 
-    # 🚀 FIX: Correct Serialization (No AttributeError on p.fee_records)
     fee_records = []
     for p in payments:
         raw_date = getattr(p, "payment_date", getattr(p, "created_at", None))
         formatted_date = raw_date.strftime("%d %b, %Y") if raw_date else "—"
-        
+
+        meta = getattr(p, "metadata_payload", {}) or {}
+        notes_str = getattr(p, "notes", "") or ""
+
+        fee_type_resolved = (
+            meta.get("fee_type")
+            or getattr(p, "fee_type", None)
+            or (notes_str.split(" - ")[0] if " - " in notes_str else "Monthly Tuition Fee")
+        )
+        month_resolved = (
+            meta.get("billing_month")
+            or getattr(p, "billing_month", None)
+            or (notes_str.split(" - ")[1] if " - " in notes_str else "Current Month")
+        )
+
         fee_records.append({
-            "receipt_no": p.receipt_no,
-            "fee_type": p.fee_type,
-            "month": p.billing_month,
-            "amount": p.amount_paid,
+            "receipt_number": p.receipt_number,
+            "receipt_no": p.receipt_number,
+            "fee_type": fee_type_resolved,
+            "month": month_resolved,
+            "amount": p.amount,
             "date": formatted_date
         })
 
@@ -398,23 +727,59 @@ def get_student_360_profile(
 
     avg_gpa = (sum(r.grade_point for r in results) / len(results)) if results else 0.0
 
+    # 4. Enrollment History
+    enrollment_history = db.query(StudentEnrollmentHistory).filter(
+        StudentEnrollmentHistory.student_id == student.id,
+        StudentEnrollmentHistory.tenant_id == str(tenant_id)
+    ).order_by(StudentEnrollmentHistory.promoted_at.desc()).all()
+
     return {
         "student": {
             "id": student.id,
+            "first_name": student.first_name,
+            "last_name": student.last_name,
+            "first_name_bn": getattr(student, "first_name_bn", None),
+            "last_name_bn": getattr(student, "last_name_bn", None),
+            "name_bn": getattr(student, "name_bn", None),
             "name": f"{student.first_name} {student.last_name}",
             "admission_number": student.admission_number,
             "class_name": student.class_name,
+            "section": getattr(student, "section", "A"),
             "roll_number": student.roll_number or "—",
+            "group": getattr(student, "group", None),
+            "shift": getattr(student, "shift", "Morning"),
+            "academic_year": getattr(student, "academic_year", "2026"),
             "gender": student.gender or "N/A",
             "blood_group": student.blood_group or "N/A",
             "birth_certificate_no": student.birth_certificate_no or "N/A",
+            "address": getattr(student, "address", None),
+            "emergency_contact": getattr(student, "emergency_contact", None),
+            "previous_school": getattr(student, "previous_school", None),
+            "photo_url": getattr(student, "photo_url", None),
+            "disciplinary_notes": getattr(student, "disciplinary_notes", None) if user_role in ["superadmin", "admin"] else None,
+            "health_notes": getattr(student, "health_notes", None),
             "status": student.status,
             "joined_at": student.created_at.strftime("%d %b, %Y") if student.created_at else "—"
         },
+        "enrollment_history": [
+            {
+                "id": str(h.id),
+                "academic_year": h.academic_year,
+                "class_name": h.class_name,
+                "section": h.section,
+                "roll_number": h.roll_number,
+                "group": h.group,
+                "shift": h.shift,
+                "status": h.promotion_status,
+                "remarks": h.remarks,
+                "date": h.promoted_at.strftime("%d %b, %Y") if h.promoted_at else "—"
+            }
+            for h in enrollment_history
+        ],
         "guardian": {
             "name": f"{guardian.first_name} {guardian.last_name}" if guardian else "Not Linked",
             "phone": guardian.phone_number if guardian else "N/A",
-            "relationship": link.relationship_type.value if link else "Guardian",
+            "relationship": getattr(link.relationship_type, "value", str(link.relationship_type)) if link and link.relationship_type else "Guardian",
             "profession": getattr(guardian, "profession", "Guardian") if guardian else "N/A"
         },
         "attendance": {
@@ -443,7 +808,7 @@ def get_student_detail(
     student_id: uuid.UUID,
     db: Session = Depends(get_db),
     tenant_id: str = Depends(get_current_tenant_id),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user_claims)
 ):
     student = security_guard.get_or_404_tenant_resource(
         db=db,

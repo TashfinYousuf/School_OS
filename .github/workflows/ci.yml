@@ -1,0 +1,56 @@
+name: EducationOS CI Gate
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  backend-checks:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install ruff pytest
+      - name: Compile, Ruff Lint & App Import Gate
+        run: |
+          python -m compileall -q app scripts
+          ruff check app scripts --select E9,F63,F7,F82 --no-cache
+          PYTHONPATH=. SECRET_KEY=ci-placeholder-secret-key-at-least-32-chars DATABASE_URL=sqlite:///./ci.db python -c "import app.main"
+      - name: Check Hardcoded Tenant Identifiers
+        working-directory: .
+        run: bash backend/scripts/check_hardcoded_tenant.sh
+
+  frontend-checks:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: TypeScript Typecheck
+        run: npx tsc --noEmit
+      - name: ESLint
+        run: npm run lint
+      - name: Jest Unit Tests
+        run: npm test -- --watchAll=false
+      - name: Production Build
+        run: npm run build
+

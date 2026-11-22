@@ -37,3 +37,15 @@ __pycache__/
 
 # OS
 .DS_Store
+
+# Security Audit Dumps & Scan Reports
+potential_secrets.txt
+tenant_query_anomalies.txt
+security_bandit_report.json
+*audit_report*
+*bandit*backend/backups/
+backend/backups/
+backend/backups/
+.qa-credentials.local
+*.local
+

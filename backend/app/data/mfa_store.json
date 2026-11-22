@@ -1,0 +1,21 @@
+{
+  "mfa_secrets": {
+    "eba88c83-dbda-4bdd-9025-3d20de5238cb": {
+      "secret": "IOPFUBTYNKLHNE52B7XYG2THKZ4HJIGH",
+      "recovery_code_hashes": [
+        "637efda3ab37e0b96e2ed4d20543c9c7d8ee2dfead864f6e9aa97591fdcc2a36",
+        "162e8722bf43a49003f8efd143b6e5bc8219d461b06016859c75c53c8e4e9926",
+        "0a69e733be78b8ea41b39978318e285849c87abeff66a1221d5c1db717f43b49",
+        "5e603c564aecbf8be3508384513cba0308e3aa724f913c658effdaf3467fad11",
+        "4fbd561f57254746bad1d7b9c2f33e34b033f5f88f08c5a3d2047cdf8104398d",
+        "f4f771eee78ce9315eb3b3f21c300d95faeef79d7a71dbe2a10c503b1fda6e64",
+        "1c0ba8053995901edac44f9539b4f12f1d4286a80e393b299f1be2de301dea2a",
+        "68775df8aa12606c9f8b3e32bbdd39b30ef7b9903b90ff3dd7c9ca998e414bed",
+        "60b0f5215919722a3edd41e81c514cd4774714913b6736a553033b26dccaea2b",
+        "dc5941b88747370b2122bcfc314761306d21a171060d813d311f107a74e4c41f"
+      ],
+      "updated_at": "2026-11-16T03:52:36.855184+00:00"
+    }
+  },
+  "webauthn_credentials": {}
+}
