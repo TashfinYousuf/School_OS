@@ -80,7 +80,7 @@ export default function ContactPage() {
                 </div>
                 <div>
                   <div className="text-xs text-slate-400 font-medium">Headquarters</div>
-                  <div className="font-semibold text-white">Kandirpar, Cumilla-3500 & Dhaka, Bangladesh</div>
+                  <div className="font-semibold text-white">Dhaka & Cumilla, Bangladesh</div>
                 </div>
               </div>
             </div>

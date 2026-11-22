@@ -10105,7 +10105,7 @@
             "title": "Enabled Modules"
           },
           "name": {
-            "example": "Kids Shine Academy & Coaching",
+            "example": "Model Future Academy & Coaching",
             "title": "Name",
             "type": "string"
           },
@@ -27300,7 +27300,7 @@
     },
     "/api/v1/workspaces/my-workspaces": {
       "get": {
-        "description": "Returns strictly the workspaces belonging to the authenticated tenant/user.\nZero cross-tenant leakage. No hardcoded Kids Shine leakage to other tenants.",
+        "description": "Returns strictly the workspaces belonging to the authenticated tenant/user.\nZero cross-tenant leakage. No cross-tenant leakage to other tenants.",
         "operationId": "get_user_assigned_workspaces_api_v1_workspaces_my_workspaces_get",
         "parameters": [
           {

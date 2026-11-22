@@ -108,16 +108,19 @@ function persistSession(data: any, role: string) {
   window.dispatchEvent(new Event("auth-changed"));
 }
 
-function Field({ id, label, icon, ...rest }: { id: string; label: string; icon?: ReactNode } & InputHTMLAttributes<HTMLInputElement>) {
+function Field({ id, label, rightLabel, icon, ...rest }: { id: string; label: string; rightLabel?: ReactNode; icon?: ReactNode } & InputHTMLAttributes<HTMLInputElement>) {
   return (
     <div>
-      <label htmlFor={id} className="font-semibold text-gray-700 dark:text-gray-400">{label}</label>
+      <div className="flex items-center justify-between">
+        <label htmlFor={id} className="font-semibold text-gray-700 dark:text-gray-400">{label}</label>
+        {rightLabel}
+      </div>
       <div className="relative mt-1">
         {icon && <span className="absolute left-3 top-2.5 text-gray-400">{icon}</span>}
         <input
           id={id}
           {...rest}
-          className={`w-full ${icon ? "pl-9" : "pl-3"} pr-3 py-2.5 bg-gray-50 dark:bg-black/40 border border-gray-200 dark:border-white/10 rounded-xl text-xs outline-none focus:border-blue-500`}
+          className={`w-full ${icon ? "pl-9" : "pl-3"} pr-3 py-2.5 bg-gray-50 dark:bg-black/40 border border-gray-200 dark:border-white/10 rounded-xl text-xs outline-none focus:border-blue-500 transition-colors`}
         />
       </div>
     </div>
@@ -286,6 +289,11 @@ function UnifiedAuthForm() {
               autoComplete="username" maxLength={254} value={staffEmail} onChange={(e) => setStaffEmail(e.target.value)}
               placeholder="admin@school.edu.bd or teacher@school.edu.bd" />
             <Field id="staff-password" label="Password" icon={<Lock size={16} />} type="password" required
+              rightLabel={
+                <Link href="/forgot-password" className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline">
+                  {language === "EN" ? "Forgot password?" : "পাসওয়ার্ড ভুলে গেছেন?"}
+                </Link>
+              }
               autoComplete="current-password" maxLength={128} value={staffPassword} onChange={(e) => setStaffPassword(e.target.value)}
               placeholder="••••••••" />
             {schoolCodeField}
@@ -302,6 +310,11 @@ function UnifiedAuthForm() {
             <Field id="student-admission" label="Student Admission ID" icon={<Hash size={16} />} required autoComplete="username"
               maxLength={32} value={studentAdmission} onChange={(e) => setStudentAdmission(e.target.value)} placeholder="e.g. KS-2026-001" />
             <Field id="student-password" label="Student Password" icon={<Lock size={16} />} type="password" required
+              rightLabel={
+                <Link href="/forgot-password" className="text-[11px] text-purple-600 dark:text-purple-400 hover:underline">
+                  {language === "EN" ? "Forgot password?" : "পাসওয়ার্ড ভুলে গেছেন?"}
+                </Link>
+              }
               autoComplete="current-password" maxLength={128} value={studentPassword} onChange={(e) => setStudentPassword(e.target.value)}
               placeholder="••••••••" />
             {schoolCodeField}
@@ -323,6 +336,11 @@ function UnifiedAuthForm() {
             <Field id="guardian-identifier" label={language === "EN" ? "Registered Mobile Number or Email" : "নিবন্ধিত মোবাইল নম্বর বা ইমেইল"} icon={<Phone size={16} />} required
               autoComplete="username" maxLength={128} value={guardianIdentifier} onChange={(e) => setGuardianIdentifier(e.target.value)} placeholder="e.g. 017XXXXXXXX or parent@gmail.com" />
             <Field id="guardian-password" label={language === "EN" ? "Guardian Password" : "অভিভাবক পাসওয়ার্ড"} icon={<Lock size={16} />} type="password" required
+              rightLabel={
+                <Link href="/forgot-password" className="text-[11px] text-green-600 dark:text-green-400 hover:underline">
+                  {language === "EN" ? "Forgot password?" : "পাসওয়ার্ড ভুলে গেছেন?"}
+                </Link>
+              }
               autoComplete="current-password" maxLength={128} value={guardianPassword} onChange={(e) => setGuardianPassword(e.target.value)}
               placeholder="••••••••" />
             {schoolCodeField}

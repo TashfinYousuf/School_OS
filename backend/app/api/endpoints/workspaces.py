@@ -16,7 +16,7 @@ router = APIRouter()
 
 
 class WorkspaceCreatePayload(BaseModel):
-    name: str = Field(..., json_schema_extra={"example": "Kids Shine Academy & Coaching"})
+    name: str = Field(..., json_schema_extra={"example": "Model Future Academy & Coaching"})
     workspace_type: str = Field(..., json_schema_extra={"example": "academy"}) # "school" or "academy"
     enabled_modules: Optional[List[str]] = None
 
@@ -48,7 +48,7 @@ def get_tenant_school_name(db: Session, tenant_id: str) -> str:
 def ensure_default_workspaces(db: Session, tenant_id: str) -> List[Workspace]:
     """
     Auto-provisions ONLY the Primary School workspace for this specific tenant.
-    Never hardcodes 'Kids Shine' or forces an Academy workspace for other schools.
+    Never hardcodes a specific tenant or forces an Academy workspace for other schools.
     """
     workspaces = db.query(Workspace).filter(Workspace.tenant_id == str(tenant_id)).all()
     if workspaces:
@@ -92,8 +92,7 @@ def get_tenant_workspaces_list(
     current_user: User = Depends(get_current_user)
 ):
     # 1. Fetch real school profile name registered by the institution
-    profile = db.query(SchoolProfile).filter(SchoolProfile.tenant_id == str(tenant_id)).first()
-    real_school_name = (profile.school_name.strip() if profile and profile.school_name else "Kids Shine International School")
+    real_school_name = get_tenant_school_name(db, tenant_id)
 
     # 2. Fetch existing workspaces strictly under this tenant
     workspaces = db.query(Workspace).filter(
@@ -329,7 +328,7 @@ def get_user_assigned_workspaces(
 ):
     """
     Returns strictly the workspaces belonging to the authenticated tenant/user.
-    Zero cross-tenant leakage. No hardcoded Kids Shine leakage to other tenants.
+    Zero cross-tenant leakage. No cross-tenant leakage to other tenants.
     """
     # 1. Fetch user memberships
     memberships = db.query(InstitutionalMembership).filter(

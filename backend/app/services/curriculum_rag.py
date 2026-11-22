@@ -1203,7 +1203,7 @@ class CurriculumRAGService:
             client = get_genai_client()
             if client:
                 prompt = (
-                    f"You are an expert pedagogical AI teacher at Kids Shine International School.\n"
+                    f"You are an expert pedagogical AI teacher for this educational institution.\n"
                     f"Answer the user's question accurately and helpfully based strictly on the following curriculum grounding context.\n"
                     f"If the answer cannot be found in the context, explicitly indicate that.\n\n"
                     f"{grounding}\n\n"

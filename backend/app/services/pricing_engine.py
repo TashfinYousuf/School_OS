@@ -353,7 +353,7 @@ class PricingEngine:
         monthly_net_dec = _q(total_due_dec / Decimal(billing_months))
 
         if is_pilot:
-            notes.append("Approved Pilot Institution (Kids Shine School): 60-day complimentary trial applied (0.00 BDT due).")
+            notes.append("Approved Pilot Institution: 60-day complimentary trial applied (0.00 BDT due).")
             total_due_dec = ZERO_DEC
             monthly_net_dec = ZERO_DEC
 
