@@ -76,3 +76,4 @@ Monitoring child's daily presence/absence, reviewing report cards, receiving sch
 4. Enter registered phone number (e.g., `01673998729`) or email and the password.
 5. Click **Sign In**.
 6. System routes guardian to `/dashboard/guardians` displaying linked children.
+

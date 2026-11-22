@@ -51,3 +51,4 @@ In the event of an operational need to rotate production keys:
 1. **JWT Secret Rotation:** Deploy dual-secret verification (accept current and previous secret for 60 minutes, issue exclusively with new secret).
 2. **Database URI Rotation:** Update connection strings in Supabase control panel; redeploy backend environment variables without application downtime.
 3. **AI / Third-Party Keys:** Revoke obsolete key in Google AI Studio / Resend dashboard; update `.env` in container runner.
+

@@ -135,3 +135,4 @@ Before executing `git commit`:
 1. Run `git status` and verify no red files under `uploads/`, `diff`, or `.env`.
 2. Never run `git add .` or `git add -A` blindly. Stage explicit paths: `git add <file1> <file2>`.
 3. Check `git diff --staged` to verify no accidental hardcoded tokens or test keys.
+

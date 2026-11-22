@@ -59,3 +59,4 @@ EducationOS implements a unified multi-tenant authentication architecture suppor
 - **Open-Redirect Defense:**
   - All post-login redirections use `getSafeReturnUrl(targetUrl, defaultRoleUrl)`.
   - External origins and protocol-relative URLs (`//evil.com`) are stripped and redirected to default role dashboards.
+

@@ -52,3 +52,4 @@ A suite of pedagogical questions was submitted to the AI Doubt Solver to verify 
 - **Route Switching:** Navigating from `/dashboard/learning` to `/dashboard/attendance` while background ingestion was running caused zero lag or stuck loading spinners.
 - **Upload Progress UI:** Polling updates percentage progress smoothly from 0% -> 25% (Extracted) -> 75% (Embedded) -> 100% (Ready).
 - **Cancellation:** User-triggered job cancellation cleanly aborts the background worker and reclaims scratch memory.
+

@@ -58,3 +58,4 @@ The pricing calculation engine uses `Decimal` arithmetic to eliminate floating-p
 1. **Zero Hidden Fees:** All taxes, platform maintenance, and customer support SLAs are clearly itemized on quotation PDFs.
 2. **Student Band Elasticity:** Invoices automatically adjust when active student counts cross standard tier thresholds (e.g. 500 to 1,000 students).
 3. **No Lock-In:** Standard cancellation policy guarantees school data export in JSON and Excel formats upon request.
+

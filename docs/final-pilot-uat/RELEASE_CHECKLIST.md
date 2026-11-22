@@ -43,3 +43,4 @@
 - [ ] **Database Connection Pool Inspection:** Verify active connections to Supabase pooler remain < 30% of pool capacity.
 - [ ] **RAG Indexing Monitoring:** Monitor background ingestion latency when teachers upload new curriculum notes or worksheets.
 - [ ] **User Feedback Collection:** Log initial usability feedback from teachers and administrative staff for minor ergonomics tuning.
+

@@ -35,10 +35,27 @@ function ActivationForm() {
     message: string;
   } | null>(null);
 
+  const [invitationInfo, setInvitationInfo] = useState<{
+    targetRole?: string;
+    identifier?: string;
+  } | null>(null);
+
   useEffect(() => {
     const urlToken = searchParams.get("token");
     if (urlToken) {
-      setToken(urlToken.trim());
+      const clean = urlToken.trim();
+      setToken(clean);
+      fetchWithTenant(`/api/v1/auth/invitation-status?token=${encodeURIComponent(clean)}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (data?.valid) {
+            setInvitationInfo({
+              targetRole: data.target_role,
+              identifier: data.identifier,
+            });
+          }
+        })
+        .catch(() => {});
     }
   }, [searchParams]);
 
@@ -147,7 +164,7 @@ function ActivationForm() {
             </div>
 
             <Link
-              href={`/login`}
+              href={`/login?tab=${successData.role === "student" ? "student" : successData.role === "guardian" ? "guardian" : "staff"}`}
               className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold flex items-center justify-center gap-2 shadow-sm transition-all"
             >
               <span>
@@ -161,6 +178,18 @@ function ActivationForm() {
         ) : (
           /* Activation Form */
           <form onSubmit={handleSubmit} className="space-y-4 text-xs">
+            {invitationInfo && (
+              <div className="p-3 bg-blue-50 dark:bg-blue-500/10 border border-blue-200 dark:border-blue-500/20 rounded-xl text-blue-800 dark:text-blue-300 text-xs flex items-center justify-between">
+                <div>
+                  <span className="font-semibold capitalize">{invitationInfo.targetRole} Portal:</span>{" "}
+                  <strong className="font-mono">{invitationInfo.identifier}</strong>
+                </div>
+                <span className="text-[10px] uppercase font-mono px-2 py-0.5 bg-blue-200/50 dark:bg-blue-500/20 rounded font-semibold">
+                  Valid Token
+                </span>
+              </div>
+            )}
+
             {errorMsg && (
               <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl flex items-start gap-2 text-xs text-red-600 dark:text-red-400">
                 <AlertTriangle size={16} className="shrink-0 mt-0.5" />

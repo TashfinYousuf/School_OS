@@ -57,3 +57,4 @@
 - **RTO (Recovery Time Objective):** < 30 minutes in event of complete regional failover.
 - **RPO (Recovery Point Objective):** < 5 minutes of data loss under catastrophic failure.
 - **Log Aggregation:** Structured JSON logging outputs to stdout; ingested by centralized log monitoring. No passwords, tokens, or personal identifiers are written to log streams.
+

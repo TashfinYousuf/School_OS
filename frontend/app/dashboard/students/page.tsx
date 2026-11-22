@@ -6,7 +6,8 @@ import {
   Users, UserPlus, Search, Phone, 
   CheckCircle2, AlertCircle, Loader2, X, Printer, FileText,
   Edit, ArrowRight, ArrowLeft, ShieldCheck, Calendar, BookOpen,
-  Award, Wallet, Clock, MapPin, HeartPulse, History, ChevronRight
+  Award, Wallet, Clock, MapPin, HeartPulse, History, ChevronRight,
+  KeyRound, Copy, Check, MessageSquare, Ban, RefreshCw, Send, Lock
 } from "lucide-react";
 import { useInstitution } from "@/lib/institution";
 import { fetchWithTenant } from "@/lib/api-client";
@@ -28,6 +29,10 @@ interface StudentItem {
   guardian_name: string | null;
   guardian_phone: string | null;
   status: string;
+  portal_status?: "NOT_PROVISIONED" | "INVITED" | "ACTIVE" | "SUSPENDED";
+  user_id?: string | null;
+  username?: string | null;
+  invitation_expires_at?: string | null;
 }
 
 export default function StudentsDirectoryPage() {
@@ -50,10 +55,21 @@ export default function StudentsDirectoryPage() {
   // Student 360 Workspace State
   const [profile360, setProfile360] = useState<any | null>(null);
   const [loading360, setLoading360] = useState(false);
-  const [active360Tab, setActive360Tab] = useState<"card" | "academic" | "personal" | "guardian" | "history">("card");
+  const [active360Tab, setActive360Tab] = useState<"card" | "academic" | "personal" | "guardian" | "history" | "portal">("card");
   const [isEditing360, setIsEditing360] = useState(false);
   const [saving360, setSaving360] = useState(false);
   const [editSuccessMsg, setEditSuccessMsg] = useState<string | null>(null);
+
+  // Portal Management States
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [activationModal, setActivationModal] = useState<{
+    studentName: string;
+    admissionNumber: string;
+    activationUrl: string;
+    activationToken: string;
+    guardianPhone?: string | null;
+  } | null>(null);
+  const [copiedLink, setCopiedLink] = useState(false);
   
   const [editForm, setEditForm] = useState({
     first_name: "",
@@ -240,6 +256,130 @@ export default function StudentsDirectoryPage() {
   useEffect(() => {
     fetchStudents();
   }, [selectedClass, search]);
+
+  const handleProvisionPortal = async (s: StudentItem) => {
+    setActionLoading(s.id);
+    try {
+      const res = await fetchWithTenant(`/api/v1/students/${s.id}/portal/provision`, {
+        method: "POST"
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        throw new Error(err?.detail || "Failed to provision portal access.");
+      }
+      const data = await res.json();
+      setActivationModal({
+        studentName: `${s.first_name} ${s.last_name}`.trim(),
+        admissionNumber: s.admission_number,
+        activationUrl: data.activation_url,
+        activationToken: data.activation_token,
+        guardianPhone: s.guardian_phone
+      });
+      fetchStudents();
+      if (profile360 && profile360.student?.id === s.id) {
+        handleOpen360(s.id);
+      }
+    } catch (err: any) {
+      alert(err.message || "Error enabling portal access.");
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleResetPassword = async (s: StudentItem) => {
+    const msg = language === "EN"
+      ? `Generate new single-use activation invitation for student ${s.admission_number}? Any active sessions will be terminated.`
+      : `শিক্ষার্থী ${s.admission_number} এর জন্য নতুন পাসওয়ার্ড অ্যাক্টিভেশন লিংক তৈরি করবেন? পূর্বের সেশন বাতিল হবে।`;
+    if (!confirm(msg)) return;
+    setActionLoading(s.id);
+    try {
+      const res = await fetchWithTenant(`/api/v1/students/${s.id}/portal/reset-password`, {
+        method: "POST"
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => null);
+        throw new Error(err?.detail || "Failed to reset password.");
+      }
+      const data = await res.json();
+      setActivationModal({
+        studentName: `${s.first_name} ${s.last_name}`.trim(),
+        admissionNumber: s.admission_number,
+        activationUrl: data.activation_url,
+        activationToken: data.activation_token,
+        guardianPhone: s.guardian_phone
+      });
+      fetchStudents();
+      if (profile360 && profile360.student?.id === s.id) {
+        handleOpen360(s.id);
+      }
+    } catch (err: any) {
+      alert(err.message || "Error resetting student portal password.");
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleSuspendPortal = async (s: StudentItem) => {
+    const msg = language === "EN"
+      ? `Suspend student portal access for ${s.admission_number}?`
+      : `শিক্ষার্থী ${s.admission_number} এর পোর্টাল অ্যাক্সেস স্থগিত করবেন?`;
+    if (!confirm(msg)) return;
+    setActionLoading(s.id);
+    try {
+      const res = await fetchWithTenant(`/api/v1/students/${s.id}/portal/suspend`, {
+        method: "POST"
+      });
+      if (!res.ok) throw new Error("Failed to suspend portal access.");
+      fetchStudents();
+      if (profile360 && profile360.student?.id === s.id) {
+        handleOpen360(s.id);
+      }
+    } catch (err: any) {
+      alert(err.message || "Failed to suspend access.");
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleReactivatePortal = async (s: StudentItem) => {
+    setActionLoading(s.id);
+    try {
+      const res = await fetchWithTenant(`/api/v1/students/${s.id}/portal/reactivate`, {
+        method: "POST"
+      });
+      if (!res.ok) throw new Error("Failed to reactivate portal access.");
+      fetchStudents();
+      if (profile360 && profile360.student?.id === s.id) {
+        handleOpen360(s.id);
+      }
+    } catch (err: any) {
+      alert(err.message || "Failed to reactivate access.");
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleCopyLink = (path: string) => {
+    const fullUrl = `${window.location.origin}${path}`;
+    navigator.clipboard.writeText(fullUrl);
+    setCopiedLink(true);
+    setTimeout(() => setCopiedLink(false), 2500);
+  };
+
+  const handleShareWhatsApp = (path: string, studentName: string, adm: string, guardianPhone?: string | null) => {
+    const fullUrl = `${window.location.origin}${path}`;
+    const schoolName = name || "School Administration";
+    const message = language === "EN"
+      ? `Greetings from ${schoolName}. Here is the student portal activation invitation for ${studentName} (ID: ${adm}): ${fullUrl} . Please click to set your permanent login password.`
+      : `আসসালামু আলাইকুম। ${schoolName}-এর পক্ষ থেকে জানানো যাচ্ছে, শিক্ষার্থী ${studentName} (আইডি: ${adm})-এর পোর্টাল অ্যাক্টিভেশন লিংক: ${fullUrl} । লিংকে ক্লিক করে স্থায়ী পাসওয়ার্ড সেট করুন।`;
+    
+    let phone = (guardianPhone || "").replace(/\D/g, "");
+    if (phone.length >= 10 && !phone.startsWith("88")) {
+      phone = "88" + phone;
+    }
+    const target = phone ? `https://wa.me/${phone}?text=${encodeURIComponent(message)}` : `https://wa.me/?text=${encodeURIComponent(message)}`;
+    window.open(target, "_blank");
+  };
 
   // Global Escape key dismissal for modals
   useEffect(() => {
@@ -433,6 +573,7 @@ export default function StudentsDirectoryPage() {
                     <th className="p-3.5">{language === "EN" ? "Stream / Shift" : "শাখা / শিফট"}</th>
                     <th className="p-3.5">{language === "EN" ? "Guardian Contact" : "অভিভাবক যোগাযোগ"}</th>
                     <th className="p-3.5">{language === "EN" ? "Status" : "অবস্থা"}</th>
+                    <th className="p-3.5">{language === "EN" ? "Portal Access" : "পোর্টাল অ্যাক্সেস"}</th>
                     <th className="p-3.5 text-right">{language === "EN" ? "Actions" : "পদক্ষেপ"}</th>
                   </tr>
                 </thead>
@@ -473,6 +614,69 @@ export default function StudentsDirectoryPage() {
                         <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-green-50 text-green-700 dark:bg-green-500/10 dark:text-green-300">
                           {s.status}
                         </span>
+                      </td>
+                      <td className="p-3.5">
+                        <div className="flex flex-col gap-1 items-start">
+                          {s.portal_status === "ACTIVE" ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">
+                              <CheckCircle2 size={10} /> Active
+                            </span>
+                          ) : s.portal_status === "INVITED" ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400">
+                              <Clock size={10} /> Pending
+                            </span>
+                          ) : s.portal_status === "SUSPENDED" ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-400">
+                              <Ban size={10} /> Suspended
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-gray-100 text-gray-600 dark:bg-white/5 dark:text-gray-400">
+                              Not Provisioned
+                            </span>
+                          )}
+
+                          <div className="flex items-center gap-1.5 mt-0.5">
+                            {(!s.portal_status || s.portal_status === "NOT_PROVISIONED") && (
+                              <button
+                                onClick={() => handleProvisionPortal(s)}
+                                disabled={actionLoading === s.id}
+                                className="text-[10px] text-blue-600 dark:text-blue-400 hover:underline font-semibold flex items-center gap-0.5 disabled:opacity-50"
+                              >
+                                {actionLoading === s.id ? <Loader2 size={10} className="animate-spin" /> : <KeyRound size={10} />}
+                                {language === "EN" ? "Enable" : "সক্রিয়"}
+                              </button>
+                            )}
+                            {s.portal_status === "INVITED" && (
+                              <button
+                                onClick={() => handleResetPassword(s)}
+                                disabled={actionLoading === s.id}
+                                className="text-[10px] text-amber-600 dark:text-amber-400 hover:underline font-semibold flex items-center gap-0.5 disabled:opacity-50"
+                              >
+                                {actionLoading === s.id ? <Loader2 size={10} className="animate-spin" /> : <RefreshCw size={10} />}
+                                {language === "EN" ? "Reissue" : "পুনরায় লিংক"}
+                              </button>
+                            )}
+                            {s.portal_status === "ACTIVE" && (
+                              <button
+                                onClick={() => handleResetPassword(s)}
+                                disabled={actionLoading === s.id}
+                                className="text-[10px] text-gray-500 hover:text-blue-600 font-semibold flex items-center gap-0.5 disabled:opacity-50"
+                              >
+                                <RefreshCw size={9} /> Reset
+                              </button>
+                            )}
+                            {s.portal_status === "SUSPENDED" && (
+                              <button
+                                onClick={() => handleReactivatePortal(s)}
+                                disabled={actionLoading === s.id}
+                                className="text-[10px] text-emerald-600 dark:text-emerald-400 hover:underline font-semibold flex items-center gap-0.5 disabled:opacity-50"
+                              >
+                                {actionLoading === s.id ? <Loader2 size={10} className="animate-spin" /> : <Check size={10} />}
+                                {language === "EN" ? "Reactivate" : "পুনরায় সক্রিয়"}
+                              </button>
+                            )}
+                          </div>
+                        </div>
                       </td>
                       <td className="p-3.5 text-right space-x-2">
                         <button
@@ -1202,30 +1406,37 @@ export default function StudentsDirectoryPage() {
               <div className="flex-1 flex flex-col space-y-4">
                 
                 {/* Workspace Navigation Tabs */}
-                <div className="flex border-b border-gray-200 dark:border-white/10 gap-1 print:hidden text-xs font-semibold">
+                <div className="flex border-b border-gray-200 dark:border-white/10 gap-1 print:hidden text-xs font-semibold overflow-x-auto">
                   <button
                     onClick={() => setActive360Tab("card")}
-                    className={`px-3 py-2 border-b-2 transition-colors ${active360Tab === "card" ? "border-blue-600 text-blue-600 dark:text-blue-400 font-bold" : "border-transparent text-gray-500 hover:text-gray-900 dark:hover:text-white"}`}
+                    className={`px-3 py-2 border-b-2 transition-colors whitespace-nowrap ${active360Tab === "card" ? "border-blue-600 text-blue-600 dark:text-blue-400 font-bold" : "border-transparent text-gray-500 hover:text-gray-900 dark:hover:text-white"}`}
                   >
                     Digital Twin Card
                   </button>
                   <button
                     onClick={() => setActive360Tab("academic")}
-                    className={`px-3 py-2 border-b-2 transition-colors ${active360Tab === "academic" ? "border-blue-600 text-blue-600 dark:text-blue-400 font-bold" : "border-transparent text-gray-500 hover:text-gray-900 dark:hover:text-white"}`}
+                    className={`px-3 py-2 border-b-2 transition-colors whitespace-nowrap ${active360Tab === "academic" ? "border-blue-600 text-blue-600 dark:text-blue-400 font-bold" : "border-transparent text-gray-500 hover:text-gray-900 dark:hover:text-white"}`}
                   >
                     Academic & Stream
                   </button>
                   <button
                     onClick={() => setActive360Tab("personal")}
-                    className={`px-3 py-2 border-b-2 transition-colors ${active360Tab === "personal" ? "border-blue-600 text-blue-600 dark:text-blue-400 font-bold" : "border-transparent text-gray-500 hover:text-gray-900 dark:hover:text-white"}`}
+                    className={`px-3 py-2 border-b-2 transition-colors whitespace-nowrap ${active360Tab === "personal" ? "border-blue-600 text-blue-600 dark:text-blue-400 font-bold" : "border-transparent text-gray-500 hover:text-gray-900 dark:hover:text-white"}`}
                   >
                     Demographics
                   </button>
                   <button
                     onClick={() => setActive360Tab("history")}
-                    className={`px-3 py-2 border-b-2 transition-colors ${active360Tab === "history" ? "border-blue-600 text-blue-600 dark:text-blue-400 font-bold" : "border-transparent text-gray-500 hover:text-gray-900 dark:hover:text-white"}`}
+                    className={`px-3 py-2 border-b-2 transition-colors whitespace-nowrap ${active360Tab === "history" ? "border-blue-600 text-blue-600 dark:text-blue-400 font-bold" : "border-transparent text-gray-500 hover:text-gray-900 dark:hover:text-white"}`}
                   >
                     Enrollment History
+                  </button>
+                  <button
+                    onClick={() => setActive360Tab("portal")}
+                    className={`px-3 py-2 border-b-2 transition-colors whitespace-nowrap flex items-center gap-1.5 ${active360Tab === "portal" ? "border-blue-600 text-blue-600 dark:text-blue-400 font-bold" : "border-transparent text-gray-500 hover:text-gray-900 dark:hover:text-white"}`}
+                  >
+                    <KeyRound size={13} />
+                    Portal & Access
                   </button>
                 </div>
 
@@ -1386,6 +1597,123 @@ export default function StudentsDirectoryPage() {
                   </div>
                 )}
 
+                {/* TAB 5: Portal Access & Identity */}
+                {active360Tab === "portal" && (
+                  <div className="space-y-4 animate-in fade-in p-4 bg-gray-50/50 dark:bg-black/20 rounded-2xl border border-gray-100 dark:border-white/5">
+                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-3 border-b border-gray-200 dark:border-white/10">
+                      <div>
+                        <h3 className="text-sm font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                          <KeyRound className="text-blue-600" size={16} />
+                          Student Portal Identity & Access Controls
+                        </h3>
+                        <p className="text-[11px] text-gray-500">
+                          Deterministic mapping: Admission ID acts as username. Zero plaintext permanent passwords stored.
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        {profile360.student?.portal_status === "ACTIVE" ? (
+                          <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300 flex items-center gap-1">
+                            <CheckCircle2 size={12} /> Active Portal Account
+                          </span>
+                        ) : profile360.student?.portal_status === "INVITED" ? (
+                          <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400 flex items-center gap-1">
+                            <Clock size={12} /> Activation Invitation Pending
+                          </span>
+                        ) : profile360.student?.portal_status === "SUSPENDED" ? (
+                          <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-400 flex items-center gap-1">
+                            <Ban size={12} /> Access Suspended
+                          </span>
+                        ) : (
+                          <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-gray-100 text-gray-600 dark:bg-white/5 dark:text-gray-400">
+                            Not Provisioned
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Identity Details Card */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="p-3 bg-white dark:bg-[#151518] rounded-xl border border-gray-200 dark:border-white/10">
+                        <span className="text-[10px] uppercase font-bold text-gray-400 block">Portal Username (Login ID)</span>
+                        <span className="text-sm font-mono font-bold text-gray-900 dark:text-white mt-0.5 block">
+                          {profile360.student?.admission_number}
+                        </span>
+                      </div>
+                      <div className="p-3 bg-white dark:bg-[#151518] rounded-xl border border-gray-200 dark:border-white/10">
+                        <span className="text-[10px] uppercase font-bold text-gray-400 block">Linked User UUID</span>
+                        <span className="text-xs font-mono text-gray-700 dark:text-gray-300 truncate mt-1 block">
+                          {profile360.student?.user_id || "None (Not Provisioned)"}
+                        </span>
+                      </div>
+                      <div className="p-3 bg-white dark:bg-[#151518] rounded-xl border border-gray-200 dark:border-white/10">
+                        <span className="text-[10px] uppercase font-bold text-gray-400 block">Authentication Role</span>
+                        <span className="text-xs font-semibold text-purple-600 dark:text-purple-400 uppercase mt-1 block">
+                          student
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Administrative Action Center */}
+                    <div className="p-4 bg-white dark:bg-[#151518] rounded-xl border border-gray-200 dark:border-white/10 space-y-3">
+                      <h4 className="text-xs font-bold uppercase tracking-wider text-gray-500">
+                        Credential & Onboarding Actions
+                      </h4>
+
+                      <div className="flex flex-wrap gap-2.5">
+                        {(!profile360.student?.portal_status || profile360.student?.portal_status === "NOT_PROVISIONED") ? (
+                          <button
+                            onClick={() => handleProvisionPortal(profile360.student)}
+                            disabled={actionLoading === profile360.student?.id}
+                            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-all disabled:opacity-50"
+                          >
+                            {actionLoading === profile360.student?.id ? <Loader2 size={14} className="animate-spin" /> : <KeyRound size={14} />}
+                            Enable Portal & Generate Activation Link
+                          </button>
+                        ) : (
+                          <>
+                            <button
+                              onClick={() => handleResetPassword(profile360.student)}
+                              disabled={actionLoading === profile360.student?.id}
+                              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-all disabled:opacity-50"
+                            >
+                              {actionLoading === profile360.student?.id ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                              Reset Password / Reissue Activation Link
+                            </button>
+
+                            {profile360.student?.portal_status === "ACTIVE" && (
+                              <button
+                                onClick={() => handleSuspendPortal(profile360.student)}
+                                disabled={actionLoading === profile360.student?.id}
+                                className="bg-rose-50 text-rose-700 hover:bg-rose-100 dark:bg-rose-500/10 dark:text-rose-300 px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all disabled:opacity-50"
+                              >
+                                <Ban size={14} /> Suspend Portal Access
+                              </button>
+                            )}
+
+                            {profile360.student?.portal_status === "SUSPENDED" && (
+                              <button
+                                onClick={() => handleReactivatePortal(profile360.student)}
+                                disabled={actionLoading === profile360.student?.id}
+                                className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-all disabled:opacity-50"
+                              >
+                                <Check size={14} /> Reactivate Portal Access
+                              </button>
+                            )}
+                          </>
+                        )}
+                      </div>
+
+                      <div className="p-3 bg-gray-50 dark:bg-white/[0.02] border border-gray-100 dark:border-white/5 rounded-xl text-[11px] text-gray-500 flex items-start gap-2 mt-2">
+                        <ShieldCheck size={16} className="text-emerald-500 shrink-0 mt-0.5" />
+                        <span>
+                          Student authentication uses single-use high-entropy cryptographic tokens. Permanent passwords must be chosen and established directly by the student or parent. School administrators never store or observe permanent plaintext credentials.
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
               </div>
             )}
 
@@ -1434,6 +1762,104 @@ export default function StudentsDirectoryPage() {
                 <div>Phone: <strong>{selectedStudentForSlip.guardian_phone || selectedStudentForSlip.guardian?.phone_number}</strong></div>
                 <div>Date: <strong>{selectedStudentForSlip.admitted_date}</strong></div>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Student Portal Activation Link Modal */}
+      {activationModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setActivationModal(null);
+          }}
+          role="presentation"
+        >
+          <div
+            className="bg-white dark:bg-[#0f0f11] border border-gray-200 dark:border-white/10 rounded-3xl w-full max-w-lg p-6 shadow-2xl space-y-4"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="flex justify-between items-center pb-3 border-b border-gray-100 dark:border-white/10">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-2xl bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center">
+                  <KeyRound size={20} />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-gray-900 dark:text-white">
+                    {language === "EN" ? "Student Portal Activation Link" : "শিক্ষার্থী পোর্টাল অ্যাক্টিভেশন লিংক"}
+                  </h3>
+                  <p className="text-xs text-gray-500 font-mono">
+                    {activationModal.studentName} • {activationModal.admissionNumber}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setActivationModal(null)}
+                className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <p className="text-xs text-gray-600 dark:text-gray-400 leading-relaxed">
+              {language === "EN"
+                ? "This single-use cryptographic invitation link allows the student or guardian to set their permanent password. It expires automatically in 72 hours."
+                : "এই একক-ব্যবহারযোগ্য অ্যাক্টিভেশন লিংকের মাধ্যমে শিক্ষার্থী বা অভিভাবক তাদের স্থায়ী পাসওয়ার্ড সেট করতে পারবেন। লিংকটি ৭২ ঘণ্টা পর মেয়াদোত্তীর্ণ হবে।"}
+            </p>
+
+            {/* Link Box */}
+            <div className="space-y-1.5">
+              <label className="text-[10px] font-bold uppercase tracking-wider text-gray-500">
+                {language === "EN" ? "Single-Use Activation URL" : "অ্যাক্টিভেশন লিংক"}
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  readOnly
+                  value={typeof window !== "undefined" ? `${window.location.origin}${activationModal.activationUrl}` : activationModal.activationUrl}
+                  className="flex-1 bg-gray-50 dark:bg-black/40 border border-gray-200 dark:border-white/10 rounded-xl px-3 py-2 text-xs font-mono text-gray-800 dark:text-gray-200 select-all outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => handleCopyLink(activationModal.activationUrl)}
+                  className={`px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm ${
+                    copiedLink
+                      ? "bg-emerald-600 text-white"
+                      : "bg-gray-100 hover:bg-gray-200 dark:bg-white/10 dark:hover:bg-white/15 text-gray-800 dark:text-gray-200"
+                  }`}
+                >
+                  {copiedLink ? <Check size={14} /> : <Copy size={14} />}
+                  <span>{copiedLink ? "Copied!" : "Copy"}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Quick Share Buttons */}
+            <div className="pt-2 flex flex-col sm:flex-row gap-2">
+              <button
+                type="button"
+                onClick={() => handleShareWhatsApp(
+                  activationModal.activationUrl,
+                  activationModal.studentName,
+                  activationModal.admissionNumber,
+                  activationModal.guardianPhone
+                )}
+                className="flex-1 bg-green-600 hover:bg-green-700 text-white py-2.5 px-4 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 shadow-sm transition-all"
+              >
+                <MessageSquare size={15} />
+                <span>{language === "EN" ? "Share via WhatsApp" : "হোয়াটসঅ্যাপে পাঠান"}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setActivationModal(null)}
+                className="py-2.5 px-4 rounded-xl text-xs font-semibold border border-gray-200 dark:border-white/10 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-white/5 transition-all"
+              >
+                {language === "EN" ? "Close" : "বন্ধ করুন"}
+              </button>
             </div>
           </div>
         </div>

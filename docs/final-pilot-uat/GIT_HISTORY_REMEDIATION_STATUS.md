@@ -47,3 +47,4 @@ The inspection scanned for:
 
 1. **Pre-Push Hooks:** Team developers must use pre-commit hooks running secret-detection scanners.
 2. **Environment Variable Injection:** Continuous Integration pipelines and production deployment platforms inject secrets exclusively via environment variables.
+

@@ -42,3 +42,4 @@ EducationOS employs an institutional design system tailored for primary and seco
 - **Focus States:** High-visibility ring offsets (`ring-2 ring-emerald-500 ring-offset-2`) for full keyboard navigation accessibility.
 - **Loading & Skeleton States:** Smooth pulse animations during async data fetching; eliminates abrupt layout shift (Cumulative Layout Shift < 0.05).
 - **Empty States:** Clear illustrations and guidance text displayed when lists (e.g. students, fee waivers, notices) contain no records.
+

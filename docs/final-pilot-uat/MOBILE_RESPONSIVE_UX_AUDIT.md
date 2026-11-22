@@ -40,3 +40,4 @@ School administrators, teachers, and guardians in Bangladesh predominantly inter
 
 ### C. Data Tables & Tabular Data
 - Complex institutional tables (attendance grids, fee ledgers, exam grade sheets) wrap within `.overflow-x-auto` containers with sticky header rows and subtle shadow indicators for horizontal scrollability.
+

@@ -1,11 +1,11 @@
 import uuid
 import jwt
 
-from typing import List, Optional
-from datetime import date, datetime
+from typing import Any, List, Optional
+from datetime import date, datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
+from sqlalchemy import or_, func
 from pydantic import BaseModel, ConfigDict
 
 from app.api.deps import get_db, get_current_tenant_id, require_roles, get_current_user, get_current_user_claims
@@ -18,7 +18,21 @@ from app.models.result import StudentResult
 from app.models.finance import FeePayment, Invoice
 from app.models.academic import ClassRoutine, StudentEnrollmentHistory
 from app.models.audit import AuditLog
+from app.models.auth import AccountInvitation
+from app.services.identity_service import IdentityService
 from app.core.identity import generate_student_uid
+
+
+def _as_uuid(val: Any) -> Optional[uuid.UUID]:
+    if val is None:
+        return None
+    if isinstance(val, uuid.UUID):
+        return val
+    try:
+        return uuid.UUID(str(val))
+    except (ValueError, AttributeError, TypeError):
+        return None
+
 from app.schemas.student import (
     StudentBulkImportRequest,
     StudentBulkImportResponse,
@@ -77,6 +91,10 @@ class StudentListItem(BaseModel):
     status: str
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    portal_status: Optional[str] = "NOT_PROVISIONED"
+    user_id: Optional[uuid.UUID] = None
+    username: Optional[str] = None
+    invitation_expires_at: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -134,11 +152,41 @@ def list_students(
 
     students = query.order_by(Student.roll_number.asc(), Student.admission_number.asc()).all()
 
+    # Pre-fetch users and active invitations to populate portal status with minimal DB roundtrips
+    tid_str = str(tenant_id)
+    t_uuid = _as_uuid(tenant_id)
+    raw_user_ids = [_as_uuid(s.user_id) for s in students if s.user_id]
+    user_ids = [uid for uid in raw_user_ids if uid is not None]
+    user_map = {}
+    if user_ids and t_uuid:
+        try:
+            with db.begin_nested():
+                users = db.query(User).filter(User.id.in_(user_ids), User.tenant_id == t_uuid).all()
+                user_map = {u.id: u for u in users}
+        except Exception:
+            pass
+
+    student_ids = [s.id for s in students]
+    inv_map = {}
+    if student_ids:
+        try:
+            with db.begin_nested():
+                invs = db.query(AccountInvitation).filter(
+                    AccountInvitation.tenant_id == tid_str,
+                    AccountInvitation.student_id.in_(student_ids),
+                    AccountInvitation.is_consumed == False
+                ).all()
+                inv_map = {i.student_id: i for i in invs}
+        except Exception:
+            pass
+
+    now_utc = datetime.now(timezone.utc)
+
     response = []
     for s in students:
         link = db.query(GuardianStudentLink).filter(
             GuardianStudentLink.student_id == s.id,
-            GuardianStudentLink.tenant_id == str(tenant_id)
+            GuardianStudentLink.tenant_id == tid_str
         ).first()
         
         guardian_name = None
@@ -146,8 +194,21 @@ def list_students(
         if link:
             g = db.query(Guardian).filter(Guardian.id == link.guardian_id).first()
             if g:
-                guardian_name = f"{g.first_name} {g.last_name} ({link.relationship_type.value})"
+                rel_val = link.relationship_type.value if hasattr(link.relationship_type, "value") else str(link.relationship_type)
+                guardian_name = f"{g.first_name} {g.last_name} ({rel_val})"
                 guardian_phone = g.phone_number
+
+        user = user_map.get(s.user_id) if s.user_id else None
+        inv = inv_map.get(s.id)
+
+        if not user:
+            portal_status = "NOT_PROVISIONED"
+        elif inv and ((inv.expires_at.replace(tzinfo=timezone.utc) if inv.expires_at.tzinfo is None else inv.expires_at) > now_utc):
+            portal_status = "INVITED"
+        elif not user.is_active:
+            portal_status = "SUSPENDED"
+        else:
+            portal_status = "ACTIVE"
 
         response.append({
             "id": s.id,
@@ -166,7 +227,11 @@ def list_students(
             "guardian_name": guardian_name,
             "guardian_phone": guardian_phone,
             "status": s.status,
-            "created_at": s.created_at
+            "created_at": s.created_at,
+            "portal_status": portal_status,
+            "user_id": user.id if user else None,
+            "username": getattr(user, "username", None) or s.admission_number,
+            "invitation_expires_at": inv.expires_at if inv else None,
         })
     return response
 
@@ -733,6 +798,40 @@ def get_student_360_profile(
         StudentEnrollmentHistory.tenant_id == str(tenant_id)
     ).order_by(StudentEnrollmentHistory.promoted_at.desc()).all()
 
+    # Portal Access Status for 360 profile
+    tid_str = str(tenant_id)
+    t_uuid = _as_uuid(tenant_id)
+    stud_user_uuid = _as_uuid(student.user_id) if student.user_id else None
+
+    u_acc = None
+    if stud_user_uuid and t_uuid:
+        try:
+            with db.begin_nested():
+                u_acc = db.query(User).filter(User.id == stud_user_uuid, User.tenant_id == t_uuid).first()
+        except Exception:
+            pass
+
+    active_inv = None
+    try:
+        with db.begin_nested():
+            active_inv = db.query(AccountInvitation).filter(
+                AccountInvitation.tenant_id == tid_str,
+                AccountInvitation.student_id == student.id,
+                AccountInvitation.is_consumed == False
+            ).first()
+    except Exception:
+        pass
+
+    now_utc_360 = datetime.now(timezone.utc)
+    if not u_acc:
+        p_status = "NOT_PROVISIONED"
+    elif active_inv and ((active_inv.expires_at.replace(tzinfo=timezone.utc) if active_inv.expires_at.tzinfo is None else active_inv.expires_at) > now_utc_360):
+        p_status = "INVITED"
+    elif not u_acc.is_active:
+        p_status = "SUSPENDED"
+    else:
+        p_status = "ACTIVE"
+
     return {
         "student": {
             "id": student.id,
@@ -759,7 +858,11 @@ def get_student_360_profile(
             "disciplinary_notes": getattr(student, "disciplinary_notes", None) if user_role in ["superadmin", "admin"] else None,
             "health_notes": getattr(student, "health_notes", None),
             "status": student.status,
-            "joined_at": student.created_at.strftime("%d %b, %Y") if student.created_at else "—"
+            "joined_at": student.created_at.strftime("%d %b, %Y") if student.created_at else "—",
+            "user_id": str(student.user_id) if student.user_id else None,
+            "portal_status": p_status,
+            "username": getattr(u_acc, "username", None) or student.admission_number,
+            "invitation_expires_at": active_inv.expires_at.isoformat() if active_inv else None
         },
         "enrollment_history": [
             {
@@ -827,3 +930,135 @@ def get_student_detail(
     )
 
     return student
+
+
+# ----------------------------------------------------------------------------------------
+# Student Portal Access Management (Administrative IAM controls)
+# ----------------------------------------------------------------------------------------
+
+@router.post("/{student_id}/portal/provision", status_code=status.HTTP_200_OK)
+def provision_student_portal(
+    student_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_current_tenant_id),
+    claims: dict = Depends(require_roles(["admin"]))
+):
+    """Admin provisions login account and generates high-entropy activation token for student."""
+    tid = str(tenant_id)
+    student = db.query(Student).filter(Student.id == student_id, Student.tenant_id == tid).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found.")
+
+    user, raw_token = IdentityService.provision_student_account(
+        db=db,
+        tenant_id=tid,
+        student_id=student.id,
+        created_by_user_id=claims.get("user_id")
+    )
+    return {
+        "student_id": str(student.id),
+        "admission_number": student.admission_number,
+        "username": getattr(user, "username", None) or student.admission_number,
+        "activation_token": raw_token,
+        "activation_url": f"/activate?token={raw_token}",
+        "portal_status": "INVITED",
+        "message": "Student portal activation invitation generated successfully."
+    }
+
+
+@router.post("/{student_id}/portal/reset-password", status_code=status.HTTP_200_OK)
+def reset_student_portal_password(
+    student_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_current_tenant_id),
+    claims: dict = Depends(require_roles(["admin"]))
+):
+    """Admin resets student access, invalidates prior tokens/sessions, and generates a new activation invitation."""
+    tid = str(tenant_id)
+    student = db.query(Student).filter(Student.id == student_id, Student.tenant_id == tid).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found.")
+
+    user, raw_token = IdentityService.provision_student_account(
+        db=db,
+        tenant_id=tid,
+        student_id=student.id,
+        created_by_user_id=claims.get("user_id")
+    )
+    return {
+        "student_id": str(student.id),
+        "admission_number": student.admission_number,
+        "username": getattr(user, "username", None) or student.admission_number,
+        "activation_token": raw_token,
+        "activation_url": f"/activate?token={raw_token}",
+        "portal_status": "INVITED",
+        "message": "Student password reset invitation generated successfully."
+    }
+
+
+@router.post("/{student_id}/portal/suspend", status_code=status.HTTP_200_OK)
+def suspend_student_portal(
+    student_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_current_tenant_id),
+    claims: dict = Depends(require_roles(["admin"]))
+):
+    """Admin suspends student portal login access."""
+    tid = str(tenant_id)
+    t_uuid = _as_uuid(tenant_id)
+    student = db.query(Student).filter(Student.id == student_id, Student.tenant_id == tid).first()
+    if not student or not student.user_id:
+        raise HTTPException(status_code=404, detail="Student account not provisioned.")
+
+    u_uuid = _as_uuid(student.user_id)
+    user = db.query(User).filter(User.id == u_uuid, User.tenant_id == t_uuid).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User account not found.")
+
+    user.is_active = False
+    IdentityService.revoke_user_sessions(db, tid, str(user.id))
+    db.commit()
+    return {"student_id": str(student.id), "portal_status": "SUSPENDED", "message": "Student portal access suspended."}
+
+
+@router.post("/{student_id}/portal/reactivate", status_code=status.HTTP_200_OK)
+def reactivate_student_portal(
+    student_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_current_tenant_id),
+    claims: dict = Depends(require_roles(["admin"]))
+):
+    """Admin reactivates suspended student portal login access."""
+    tid = str(tenant_id)
+    t_uuid = _as_uuid(tenant_id)
+    student = db.query(Student).filter(Student.id == student_id, Student.tenant_id == tid).first()
+    if not student or not student.user_id:
+        raise HTTPException(status_code=404, detail="Student account not provisioned.")
+
+    u_uuid = _as_uuid(student.user_id)
+    user = db.query(User).filter(User.id == u_uuid, User.tenant_id == t_uuid).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User account not found.")
+
+    user.is_active = True
+    db.commit()
+    return {"student_id": str(student.id), "portal_status": "ACTIVE", "message": "Student portal access reactivated."}
+
+
+@router.post("/{student_id}/portal/revoke", status_code=status.HTTP_200_OK)
+def revoke_student_invitation(
+    student_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    tenant_id: str = Depends(get_current_tenant_id),
+    claims: dict = Depends(require_roles(["admin"]))
+):
+    """Admin revokes unconsumed invitation tokens for student."""
+    tid = str(tenant_id)
+    now = datetime.now(timezone.utc)
+    count = db.query(AccountInvitation).filter(
+        AccountInvitation.tenant_id == tid,
+        AccountInvitation.student_id == student_id,
+        AccountInvitation.is_consumed == False
+    ).update({"is_consumed": True, "consumed_at": now}, synchronize_session=False)
+    db.commit()
+    return {"student_id": str(student_id), "revoked_count": count, "message": "Student invitations revoked."}

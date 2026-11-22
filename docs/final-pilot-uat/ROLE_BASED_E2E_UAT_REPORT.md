@@ -53,3 +53,4 @@ Every institutional role has been systematically tested through end-to-end user 
 - **Step 2:** View linked students `GET /api/v1/guardians/my-children` -> Returns Talha Hussain (`KSIS-2027-001`).
 - **Step 3:** View student fee invoices `GET /api/v1/finance/student/{id}/invoices` -> Invoices displayed.
 - **Step 4:** Attempt to access student records of other families -> Rejected (403 Forbidden).
+

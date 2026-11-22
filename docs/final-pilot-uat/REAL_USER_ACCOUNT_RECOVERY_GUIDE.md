@@ -77,3 +77,4 @@ cd /Users/tashfinyousuf/Python/SCHOOL_OS
 PYTHONPATH=backend venv/bin/python -m app.cli.qa_accounts provision
 ```
 This verifies and re-generates administrative identities into `.qa-credentials.local` (mode 0600).
+

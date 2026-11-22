@@ -51,3 +51,4 @@ Status: PASS
 - **Error Recovery:**
   - Every error caught in request lifecycles executes `db.rollback()` prior to session close, eliminating connection contamination in subsequent requests.
   - Read-heavy queries utilize `optional_query` and `count_rows` (`SELECT count(*)`) rather than loading full model object graphs into memory.
+

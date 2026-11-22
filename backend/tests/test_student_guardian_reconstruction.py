@@ -374,3 +374,157 @@ def test_revoked_guardian_link_immediately_blocks_access(tenant_fixture):
     assert post_res.status_code == 403
     db.close()
 
+
+def test_admin_student_portal_lifecycle_api(tenant_fixture):
+    """
+    Verifies end-to-end admin controls for Student Portal Access:
+    provision -> check list status -> suspend -> reactivate -> reset password.
+    """
+    db = SessionLocal()
+    admin_token = tenant_fixture["admin_token"]
+    tenant_id = tenant_fixture["tenant_id"]
+    headers = {"Authorization": f"Bearer {admin_token}", "X-Tenant-ID": str(tenant_id)}
+
+    student_id = tenant_fixture["student1_id"]
+
+    # 1. Provision portal access via student endpoint
+    res = client.post(f"/api/v1/students/{student_id}/portal/provision", headers=headers)
+    assert res.status_code == 200
+    data = res.json()
+    assert data["portal_status"] == "INVITED"
+    assert "token=" in data["activation_url"]
+    raw_token = data["activation_token"]
+
+    # 2. Check student list contains updated portal status
+    list_res = client.get("/api/v1/students/", headers=headers)
+    assert list_res.status_code == 200
+    std_item = next((s for s in list_res.json() if s["id"] == str(student_id)), None)
+    assert std_item is not None
+    assert std_item["portal_status"] == "INVITED"
+
+    # 3. Consume activation token
+    act_res = client.post("/api/v1/auth/activate", json={
+        "token": raw_token,
+        "password": "PermanentStudentPass123!"
+    })
+    assert act_res.status_code == 200
+
+    # 4. Check status transitions to ACTIVE
+    list_res2 = client.get("/api/v1/students/", headers=headers)
+    std_item2 = next((s for s in list_res2.json() if s["id"] == str(student_id)), None)
+    assert std_item2["portal_status"] == "ACTIVE"
+
+    # 5. Admin suspends student access
+    susp_res = client.post(f"/api/v1/students/{student_id}/portal/suspend", headers=headers)
+    assert susp_res.status_code == 200
+    assert susp_res.json()["portal_status"] == "SUSPENDED"
+
+    # Student login blocked while suspended
+    login_res = client.post("/api/v1/auth/student", json={
+        "admission_number": std_item2["admission_number"],
+        "password": "PermanentStudentPass123!"
+    })
+    assert login_res.status_code == 401
+
+    # 6. Admin reactivates student access
+    react_res = client.post(f"/api/v1/students/{student_id}/portal/reactivate", headers=headers)
+    assert react_res.status_code == 200
+    assert react_res.json()["portal_status"] == "ACTIVE"
+
+    # Student login succeeds after reactivation
+    login_res2 = client.post("/api/v1/auth/student", json={
+        "admission_number": std_item2["admission_number"],
+        "password": "PermanentStudentPass123!"
+    })
+    assert login_res2.status_code == 200
+    assert "access_token" in login_res2.json()
+
+    # 7. Admin resets password
+    reset_res = client.post(f"/api/v1/students/{student_id}/portal/reset-password", headers=headers)
+    assert reset_res.status_code == 200
+    assert "token=" in reset_res.json()["activation_url"]
+
+    db.close()
+
+
+def test_admin_guardian_onboard_and_portal_lifecycle_api(tenant_fixture):
+    """
+    Verifies admin Guardian Onboarding, link association, directory inspection,
+    suspension, reactivation, and unlinking.
+    """
+    db = SessionLocal()
+    admin_token = tenant_fixture["admin_token"]
+    tenant_id = tenant_fixture["tenant_id"]
+    headers = {"Authorization": f"Bearer {admin_token}", "X-Tenant-ID": str(tenant_id)}
+    student_id = tenant_fixture["student2_id"]
+
+    unique_phone = f"017{secrets.randbelow(90000000) + 10000000}"
+
+    # 1. Onboard Guardian
+    onboard_res = client.post("/api/v1/guardians/onboard", json={
+        "first_name": "Afzal",
+        "last_name": "Hossain",
+        "phone_number": unique_phone,
+        "email": f"afzal-{secrets.token_hex(3)}@gmail.com",
+        "profession": "Engineer",
+        "relationship_type": "Father",
+        "student_id": str(student_id),
+        "is_primary": True
+    }, headers=headers)
+    assert onboard_res.status_code == 201
+    onboard_data = onboard_res.json()
+    assert onboard_data["portal_status"] == "INVITED"
+    guardian_id = onboard_data["guardian_id"]
+    raw_token = onboard_data["activation_token"]
+
+    # 2. Check admin list contains guardian with linked student
+    all_res = client.get("/api/v1/guardians/admin/all", headers=headers)
+    assert all_res.status_code == 200
+    g_item = next((g for g in all_res.json() if g["id"] == guardian_id), None)
+    assert g_item is not None
+    assert g_item["portal_status"] == "INVITED"
+    assert len(g_item["linked_students"]) >= 1
+
+    # 3. Activate Guardian account
+    act_res = client.post("/api/v1/auth/activate", json={
+        "token": raw_token,
+        "password": "PermanentGuardianPass123!"
+    })
+    assert act_res.status_code == 200
+
+    # 4. Guardian login succeeds
+    login_res = client.post("/api/v1/auth/guardian/login", json={
+        "identifier": unique_phone,
+        "password": "PermanentGuardianPass123!"
+    })
+    assert login_res.status_code == 200
+
+    # 5. Admin suspends Guardian
+    susp_res = client.post(f"/api/v1/guardians/{guardian_id}/portal/suspend", headers=headers)
+    assert susp_res.status_code == 200
+    assert susp_res.json()["portal_status"] == "SUSPENDED"
+
+    # Login blocked while suspended
+    login_res2 = client.post("/api/v1/auth/guardian/login", json={
+        "identifier": unique_phone,
+        "password": "PermanentGuardianPass123!"
+    })
+    assert login_res2.status_code == 401
+
+    # 6. Admin reactivates Guardian
+    react_res = client.post(f"/api/v1/guardians/{guardian_id}/portal/reactivate", headers=headers)
+    assert react_res.status_code == 200
+    assert react_res.json()["portal_status"] == "ACTIVE"
+
+    # 7. Admin unlinks student
+    unlink_res = client.post(f"/api/v1/guardians/{guardian_id}/unlink-student/{student_id}", headers=headers)
+    assert unlink_res.status_code == 200
+
+    # Check student is unlinked
+    all_res2 = client.get("/api/v1/guardians/admin/all", headers=headers)
+    g_item2 = next((g for g in all_res2.json() if g["id"] == guardian_id), None)
+    assert len(g_item2["linked_students"]) == 0
+
+    db.close()
+
+

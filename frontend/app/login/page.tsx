@@ -142,11 +142,20 @@ function UnifiedAuthForm() {
   const searchParams = useSearchParams();
   const { language, toggleLanguage } = useLanguage();
 
-  const [activeTab, setActiveTab] = useState<Tab>("staff");
+  const tabParam = (searchParams.get("tab") || "").toLowerCase();
+  const [activeTab, setActiveTab] = useState<Tab>(
+    tabParam === "student" ? "student" : tabParam === "guardian" ? "guardian" : "staff"
+  );
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const initialSchoolCode = searchParams.get("school_code") || searchParams.get("code") || "";
   const [schoolCode, setSchoolCode] = useState(initialSchoolCode);
+
+  useEffect(() => {
+    if (tabParam === "student" || tabParam === "guardian" || tabParam === "staff") {
+      setActiveTab(tabParam as Tab);
+    }
+  }, [tabParam]);
 
   const [staffEmail, setStaffEmail] = useState("");
   const [staffPassword, setStaffPassword] = useState("");

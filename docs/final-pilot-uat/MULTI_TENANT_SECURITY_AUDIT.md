@@ -45,3 +45,4 @@ User document uploads (student birth certificates, admission photographs, curric
 storage://tenants/{tenant_id}/uploads/{category}/{file_uuid}.{ext}
 ```
 Pre-signed read and write tokens validate that the requesting user's JWT `tenant_id` matches the storage path prefix before issuing access. Cross-tenant path traversal (`../`) is strictly rejected by the storage controller.
+
