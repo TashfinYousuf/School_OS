@@ -33,9 +33,11 @@ class Settings(BaseSettings):
         "http://127.0.0.1:3000",
         "https://schoolos.app",
         "https://www.schoolos.app",
+        "https://school-os.vercel.app",
         "https://educationos.vercel.app",
         "https://educationosai.vercel.app",
     ]
+    CORS_ORIGIN_REGEX: Optional[str] = r"^https://([a-zA-Z0-9_-]+\.)?(vercel\.app|schoolos\.app)$"
 
     # Core API Keys
     GEMINI_API_KEY: Optional[str] = None

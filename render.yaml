@@ -19,7 +19,9 @@ services:
       - key: SECRET_KEY
         generateValue: true
       - key: CORS_ORIGINS
-        value: '["https://schoolos.app","https://www.schoolos.app","https://educationos.vercel.app"]'
+        value: '["https://schoolos.app","https://www.schoolos.app","https://school-os.vercel.app","https://educationos.vercel.app","https://educationosai.vercel.app"]'
+      - key: CORS_ORIGIN_REGEX
+        value: '^https://([a-zA-Z0-9_-]+\.)?(vercel\.app|schoolos\.app)$'
       - key: ACCESS_TOKEN_EXPIRE_MINUTES
         value: "60"
       - key: REFRESH_TOKEN_EXPIRE_DAYS

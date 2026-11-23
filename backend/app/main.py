@@ -169,16 +169,26 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         return response
 
 
-# CORS configuration (F9 Hardening: Explicit origin whitelist)
+# CORS configuration (F9 Hardening: Explicit origin whitelist + verified regex)
 cors_origins = getattr(settings, "CORS_ORIGINS", [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
-    "https://educationosai.vercel.app"
+    "https://schoolos.app",
+    "https://www.schoolos.app",
+    "https://school-os.vercel.app",
+    "https://educationos.vercel.app",
+    "https://educationosai.vercel.app",
 ])
+cors_origin_regex = getattr(
+    settings,
+    "CORS_ORIGIN_REGEX",
+    r"^https://([a-zA-Z0-9_-]+\.)?(vercel\.app|schoolos\.app)$",
+)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=cors_origins, 
+    allow_origins=cors_origins,
+    allow_origin_regex=cors_origin_regex,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],

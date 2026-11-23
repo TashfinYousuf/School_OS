@@ -401,3 +401,72 @@ def test_bug_c_student_portal_fee_summary(test_setup):
     assert data["student"]["first_name"] == "Ayaan"
     assert data["total_paid"] == 5000.0
     assert len(data["payments"]) == 1
+
+
+def test_cors_preflight_vercel_and_preview_domains():
+    """
+    Regression Test for CORS Preflight Incident:
+    Verifies that Starlette CORSMiddleware allows legitimate Vercel production and
+    preview domains, custom domains, and rejects unauthorized origins.
+    """
+    valid_origins = [
+        "https://school-os.vercel.app",
+        "https://educationos.vercel.app",
+        "https://educationosai.vercel.app",
+        "https://educationos-git-main-tashfin-yousufs-projects.vercel.app",
+        "https://frontend-random-tashfin-yousufs-projects.vercel.app",
+        "https://schoolos.app",
+        "https://www.schoolos.app",
+        "http://localhost:3000",
+    ]
+
+    for origin in valid_origins:
+        resp = client.options(
+            "/api/v1/dashboard/metrics",
+            headers={
+                "Origin": origin,
+                "Access-Control-Request-Method": "GET",
+                "Access-Control-Request-Headers": "authorization,content-type,x-tenant-id",
+            },
+        )
+        assert resp.status_code == 200, f"Expected 200 for origin {origin}, got {resp.status_code}: {resp.text}"
+        assert resp.headers.get("access-control-allow-origin") == origin
+
+    # Malicious or untrusted origins must be rejected with 400 Bad Request
+    invalid_origins = [
+        "https://evil-attacker.com",
+        "https://phishing-schoolos.com",
+        "http://not-allowed.org",
+    ]
+    for origin in invalid_origins:
+        resp = client.options(
+            "/api/v1/dashboard/metrics",
+            headers={
+                "Origin": origin,
+                "Access-Control-Request-Method": "GET",
+                "Access-Control-Request-Headers": "authorization,content-type,x-tenant-id",
+            },
+        )
+        assert resp.status_code == 400, f"Expected 400 for untrusted origin {origin}, got {resp.status_code}"
+
+
+def test_dashboard_metrics_superadmin_role_access(test_setup):
+    """
+    Verifies that users with 'superadmin' role can query dashboard metrics and operational KPIs.
+    """
+    tid = test_setup["tenant_id"]
+    superadmin_user = test_setup["admin_user"]
+    token = create_access_token(
+        data={"sub": str(superadmin_user.id), "tenant_id": tid, "role": "superadmin"}
+    )
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "X-Tenant-ID": tid,
+    }
+
+    resp_metrics = client.get("/api/v1/dashboard/metrics", headers=headers)
+    assert resp_metrics.status_code == 200, f"Expected 200 for superadmin metrics, got {resp_metrics.status_code}: {resp_metrics.text}"
+
+    resp_kpi = client.get("/api/v1/dashboard/operational-kpi", headers=headers)
+    assert resp_kpi.status_code == 200, f"Expected 200 for superadmin operational-kpi, got {resp_kpi.status_code}: {resp_kpi.text}"
+

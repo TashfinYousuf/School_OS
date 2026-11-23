@@ -85,7 +85,7 @@ def _count_all(db: Session, models, tid: str, label: str, failures: List[str]) -
 def get_dashboard_metrics(
     db: Session = Depends(get_db),
     tenant_id: str = Depends(get_current_tenant_id),
-    _=Depends(require_roles(["admin", "teacher"])),
+    _=Depends(require_roles(["admin", "teacher", "superadmin"])),
 ):
     tid = str(tenant_id)
     today = today_bd()
@@ -228,7 +228,7 @@ def get_dashboard_metrics(
 def get_month_end_preview(
     db: Session = Depends(get_db),
     tenant_id: str = Depends(get_current_tenant_id),
-    _=Depends(require_roles(["admin"])),
+    _=Depends(require_roles(["admin", "superadmin"])),
 ):
     """
     Presents month-end performance overview to School Admin before monthly cycle transition.
@@ -319,7 +319,7 @@ def get_month_end_preview(
 def get_operational_kpi(
     db: Session = Depends(get_db),
     tenant_id: str = Depends(get_current_tenant_id),
-    _=Depends(require_roles(["admin", "teacher"])),
+    _=Depends(require_roles(["admin", "teacher", "superadmin"])),
 ):
     tid = str(tenant_id)
     today = today_bd()

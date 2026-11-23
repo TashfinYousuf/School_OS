@@ -236,7 +236,7 @@ export default function DashboardOverviewPage() {
           if (kpiRes.data) setKpiData(kpiRes.data);
           if (workRes.data) setTeacherWorkload(workRes.data);
           if (metRes.isOffline || kpiRes.isOffline || workRes.isOffline) setIsOfflineMode(true);
-        } else if (role === "admin") {
+        } else if (role === "admin" || role === "superadmin") {
           const [metRes, kpiRes] = await Promise.all([
             safeFetch<typeof metrics>("/api/v1/dashboard/metrics"),
             safeFetch<KpiOverview>("/api/v1/dashboard/operational-kpi")
@@ -682,7 +682,7 @@ export default function DashboardOverviewPage() {
       {/* ========================================================================= */}
       {/* 3. ADMIN / PRINCIPAL VIEW                                                 */}
       {/* ========================================================================= */}
-      {userRole === "admin" && (
+      {(userRole === "admin" || userRole === "superadmin") && (
         <>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
             <div className="bg-white dark:bg-[#0f0f11] border border-gray-200 dark:border-white/10 p-5 rounded-3xl shadow-sm">
