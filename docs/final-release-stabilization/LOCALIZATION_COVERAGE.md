@@ -73,3 +73,4 @@ In `frontend/tests/test_stage12_5_public_website.test.ts`:
 - `should fallback gracefully to key or English when key is missing`: **PASSED**
 - `should verify essential navigation and legal translation dictionary entries`: **PASSED**
 - `should format currency in BDT and dates bilingually using Intl.DateTimeFormat`: **PASSED**
+

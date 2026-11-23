@@ -55,3 +55,4 @@ OK: no hardcoded tenant branding
 1. **Mandatory Tenant Filtering:** Every query against a tenant-owned entity explicitly filters `Model.tenant_id == tid_str`.
 2. **Untrusted Client Parameters:** Tenant IDs passed in request headers (`X-Tenant-ID`) or route paths are verified against the authenticated user's JWT claims.
 3. **Database Transaction Pooling:** SQLAlchemy session lifecycle is managed through FastAPI dependencies (`get_db`), ensuring transactions are rolled back upon exceptions (`db.rollback()`) and closed cleanly after request completion.
+

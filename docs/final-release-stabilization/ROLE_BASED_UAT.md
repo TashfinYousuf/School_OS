@@ -75,3 +75,4 @@
   3. Generates Monthly Collection Archive Statement: selects year (2026) and month (November); generates printable statement with category and method breakdown.
   4. Clicks "Print Statement": generates clean A4 physical printout.
 - **Verification:** Double-entry ledger updates atomically; receipts cannot be modified post-issuance.
+

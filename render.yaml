@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: educationos-backend
+    runtime: python
+    region: singapore
+    plan: starter
+    branch: main
+    rootDir: backend
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 2 --proxy-headers --forwarded-allow-ips '*'"
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.10"
+      - key: ENVIRONMENT
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: CORS_ORIGINS
+        value: '["https://schoolos.app","https://www.schoolos.app","https://educationos.vercel.app"]'
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: "60"
+      - key: REFRESH_TOKEN_EXPIRE_DAYS
+        value: "7"
+      - key: TIMEZONE
+        value: "Asia/Dhaka"
+      - key: DEFAULT_TENANT_ID
+        value: "1dcd99ff-0c62-4a45-a6d9-a06a6b5b3b31"

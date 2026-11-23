@@ -44,3 +44,4 @@
   * Monthly Collection Archive Statements
   * Official Notice Board Pads (`/dashboard/notices`)
 - Navigation sidebars, command menus, language switches, and action buttons are tagged with `print:hidden`, yielding clean, institutional-grade A4 printouts ready for physical signing and archiving.
+

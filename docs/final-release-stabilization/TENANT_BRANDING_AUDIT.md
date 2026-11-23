@@ -91,3 +91,4 @@ $ bash scripts/check_hardcoded_tenant.sh
 OK: no hardcoded tenant branding
 ```
 Result: **100% CLEAN** — Zero hardcoded tenant instances in application code.
+

@@ -132,3 +132,4 @@ Verified in `backend/tests/test_rc4_bugfixes.py`:
   * BOLA attempt to query unlinked student 3 returns **403 Forbidden**.
 - `test_bug_c_student_portal_fee_summary`:
   * Student self-service retrieves own fee history with total paid = ৳5,000.
+

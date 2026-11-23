@@ -261,3 +261,4 @@ docker compose -f docker-compose.prod.yml up -d --remove-orphans
 # 5. Verify health check
 curl -f https://schoolos.education/api/v1/health || echo "HEALTH CHECK FAILED"
 ```
+

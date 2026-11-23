@@ -176,3 +176,4 @@ backend/tests/test_rc4_bugfixes.py::test_bug_c_student_portal_fee_summary PASSED
 
 ======================== 4 passed, 2 warnings in 25.07s ========================
 ```
+

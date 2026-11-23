@@ -49,8 +49,8 @@ jobs:
         run: npx tsc --noEmit
       - name: ESLint
         run: npm run lint
-      - name: Jest Unit Tests
-        run: npm test -- --watchAll=false
+      - name: Unit Tests
+        run: npm test
       - name: Production Build
         run: npm run build
 
