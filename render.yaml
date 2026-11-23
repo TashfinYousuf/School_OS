@@ -3,7 +3,7 @@ services:
     name: educationos-backend
     runtime: python
     region: singapore
-    plan: starter
+    plan: free
     branch: main
     rootDir: backend
     buildCommand: "pip install -r requirements.txt"
@@ -28,3 +28,4 @@ services:
         value: "Asia/Dhaka"
       - key: DEFAULT_TENANT_ID
         value: "1dcd99ff-0c62-4a45-a6d9-a06a6b5b3b31"
+

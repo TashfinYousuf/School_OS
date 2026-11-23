@@ -67,6 +67,20 @@ class Settings(BaseSettings):
     PAYMENT_WEBHOOK_SECRET: Optional[str] = None      # python -c "import secrets; print(secrets.token_hex(32))"
     PAYMENT_CHECKOUT_BASE_URL: Optional[str] = None
 
+    @field_validator("DATABASE_URL")
+    @classmethod
+    def normalize_db_url(cls, v: str) -> str:
+        if not v:
+            return v
+        s = v.strip()
+        if s.startswith("postgresql+psycopg://"):
+            return "postgresql+psycopg2://" + s[len("postgresql+psycopg://"):]
+        if s.startswith("postgres://"):
+            return "postgresql+psycopg2://" + s[len("postgres://"):]
+        if s.startswith("postgresql://") and not s.startswith("postgresql+"):
+            return "postgresql+psycopg2://" + s[len("postgresql://"):]
+        return s
+
     @field_validator("SECRET_KEY")
     @classmethod
     def enforce_strong_secret(cls, v: str) -> str:

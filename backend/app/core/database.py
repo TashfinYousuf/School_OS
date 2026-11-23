@@ -9,9 +9,32 @@ from app.core.config import settings
 
 logger = logging.getLogger("educationos.security.database")
 
+def normalize_database_url(url: str) -> str:
+    """
+    Normalizes PostgreSQL connection URLs to ensure psycopg2 dialect compatibility.
+    Handles:
+    - 'postgresql+psycopg://' (from Supabase UI SQLAlchemy tab) -> 'postgresql+psycopg2://'
+    - 'postgres://' (legacy cloud provider schemes) -> 'postgresql+psycopg2://'
+    - 'postgresql://' (standard URL without explicit DBAPI driver) -> 'postgresql+psycopg2://'
+    Preserves SQLite and other database URLs untouched.
+    """
+    if not url:
+        return url
+    s = str(url).strip()
+    if s.startswith("postgresql+psycopg://"):
+        return "postgresql+psycopg2://" + s[len("postgresql+psycopg://"):]
+    if s.startswith("postgres://"):
+        return "postgresql+psycopg2://" + s[len("postgres://"):]
+    if s.startswith("postgresql://") and not s.startswith("postgresql+"):
+        return "postgresql+psycopg2://" + s[len("postgresql://"):]
+    return s
+
+
+DATABASE_URL = normalize_database_url(settings.DATABASE_URL)
+
 # Create the SQLAlchemy engine with connection pool hardening
 engine_kwargs = {"pool_pre_ping": True}
-if "sqlite" not in str(settings.DATABASE_URL).lower():
+if "sqlite" not in str(DATABASE_URL).lower():
     engine_kwargs.update({
         "pool_size": 10,
         "pool_recycle": 300,
@@ -25,7 +48,7 @@ else:
         "poolclass": StaticPool
     })
 
-engine = create_engine(settings.DATABASE_URL, **engine_kwargs)
+engine = create_engine(DATABASE_URL, **engine_kwargs)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()

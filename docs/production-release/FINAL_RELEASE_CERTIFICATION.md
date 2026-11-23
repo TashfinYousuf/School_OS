@@ -80,3 +80,4 @@ GATE 7: Frontend Production Build (`npm --prefix frontend run build`) ──> PA
 # **PILOT READY — CONTROLLED LIMITATIONS**
 
 *Certified for immediate deployment and pilot launch at Kids Shine International School (KSIS), Banani, Dhaka, Bangladesh under controlled offline-financial and mock-SMS operating procedures.*
+
