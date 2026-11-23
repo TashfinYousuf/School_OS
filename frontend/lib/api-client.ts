@@ -9,11 +9,26 @@
  * - Typed Helper Methods (GET, POST, PUT, PATCH, DELETE, safeFetch)
  */
 
-const API_BASE_URL = (
-  typeof process !== "undefined" && process.env?.NEXT_PUBLIC_API_URL
-    ? process.env.NEXT_PUBLIC_API_URL
-    : "http://localhost:8000"
-).replace(/\/$/, "");
+function normalizeBaseUrl(raw?: string): string {
+  if (!raw) return "http://localhost:8000";
+  let url = raw.trim().replace(/\/+$/, "");
+  if (url.endsWith("/api/v1")) {
+    url = url.slice(0, -"/api/v1".length).replace(/\/+$/, "");
+  }
+  return url || "http://localhost:8000";
+}
+
+export const API_BASE_URL = normalizeBaseUrl(
+  typeof process !== "undefined" ? process.env?.NEXT_PUBLIC_API_URL : undefined
+);
+
+export function resolveApiUrl(endpoint: string): string {
+  if (endpoint.startsWith("http://") || endpoint.startsWith("https://")) {
+    return endpoint;
+  }
+  const clean = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
+  return `${API_BASE_URL}${clean}`;
+}
 
 import { offlineDB } from "./offline/db.ts";
 
@@ -175,9 +190,7 @@ export async function fetchWithTenant(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<Response> {
-  const fullUrl = endpoint.startsWith("http://") || endpoint.startsWith("https://")
-    ? endpoint
-    : `${API_BASE_URL}${endpoint.startsWith("/") ? "" : "/"}${endpoint}`;
+  const fullUrl = resolveApiUrl(endpoint);
 
   const token = getAccessToken();
   const activeTenantId = getActiveTenantId();

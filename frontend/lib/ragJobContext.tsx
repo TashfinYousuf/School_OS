@@ -141,7 +141,7 @@ export function RagJobProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setIsCancelling(false);
     }
-  }, [activeJob?.id, isCancelling]);
+  }, [activeJob, isCancelling]);
 
   const dismissJob = useCallback(() => {
     if (typeof window !== "undefined") {

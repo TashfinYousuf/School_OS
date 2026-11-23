@@ -79,8 +79,18 @@ async function postAuth(path: string, body: Record<string, unknown>): Promise<an
       method: "POST",
       body: JSON.stringify(body),
     });
-  } catch {
-    throw new Error("Cannot reach the server. Check your connection and try again.");
+  } catch (initialErr: unknown) {
+    // If the server was hibernating on free-tier cold start, retry once after a short delay
+    console.warn("Initial authentication connection attempt failed, retrying...", initialErr);
+    try {
+      await new Promise((r) => setTimeout(r, 2500));
+      res = await fetchWithTenant(`/api/v1/auth/${path}`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+    } catch {
+      throw new Error("Cannot reach the server. If the server is starting from idle, please wait a moment and try again.");
+    }
   }
   let data: any = null;
   try { data = await res.json(); } catch { /* non-JSON error page */ }

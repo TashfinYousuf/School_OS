@@ -173,7 +173,7 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
 cors_origins = getattr(settings, "CORS_ORIGINS", [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
-    "https://schoolos.app"
+    "https://educationosai.vercel.app"
 ])
 
 app.add_middleware(
@@ -226,13 +226,24 @@ def root():
         "message": "EducationOS API is up and running! 🚀"
     }
 
+@app.get("/livez", status_code=status.HTTP_200_OK, tags=["Infrastructure"])
+def liveness():
+    """Liveness probe: verifies the application process is running and responsive."""
+    return {
+        "status": "alive",
+        "service": settings.PROJECT_NAME,
+    }
+
+
 @app.get("/api/v1/health-db")
 def health_db(db: Session = Depends(get_db)):
     try:
         db.execute(text("SELECT 1"))
         return {"status": "success", "message": "Database connected successfully."}
     except Exception as e:
-        return {"status": "error", "message": f"Database connection failed: {str(e)}"}
+        logger = logging.getLogger("educationos.health")
+        logger.warning("Health-db probe failed: %s", str(e).splitlines()[0])
+        return {"status": "error", "message": "Database connection failed."}
 
 
 @app.get("/healthz", status_code=status.HTTP_200_OK, tags=["Infrastructure"])
@@ -244,7 +255,9 @@ def healthcheck():
         db.execute(text("SELECT 1"))
         db.close()
     except Exception as e:
-        db_status = f"unhealthy: {str(e)}"
+        logger = logging.getLogger("educationos.health")
+        logger.warning("Healthcheck DB probe failed: %s", str(e).splitlines()[0])
+        db_status = "unhealthy"
 
     return {
         "status": "online",
@@ -274,7 +287,9 @@ def api_v1_health():
         }
         db.close()
     except Exception as e:
-        db_status = f"unhealthy: {str(e)}"
+        logger = logging.getLogger("educationos.health")
+        logger.warning("Diagnostics DB probe failed: %s", str(e).splitlines()[0])
+        db_status = "unhealthy"
 
     comms_health = {}
     try:
@@ -306,8 +321,10 @@ def api_v1_ready():
         db.close()
         return {"ready": True, "reason": "All core dependencies reachable."}
     except Exception as e:
+        logger = logging.getLogger("educationos.health")
+        logger.warning("Readiness probe failed: %s", str(e).splitlines()[0])
         return Response(
-            content=json.dumps({"ready": False, "reason": f"Database unreachable: {str(e)}"}),
+            content=json.dumps({"ready": False, "reason": "Database dependency unreachable."}),
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             media_type="application/json"
         )

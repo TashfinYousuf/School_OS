@@ -164,8 +164,10 @@ export function useAcademicClasses() {
   const [error, setError] = useState<string | null>(null);
   const [isFallback, setIsFallback] = useState<boolean>(false);
 
-  const fetchClasses = useCallback(async () => {
-    setLoading(true);
+  const loadData = useCallback(async (isInitial = false) => {
+    if (!isInitial) {
+      setLoading(true);
+    }
     setError(null);
     try {
       const res = await fetchWithTenant("/api/v1/academic/classes");
@@ -180,9 +182,10 @@ export function useAcademicClasses() {
       // If endpoint returns empty or fails gracefully, use canonical Class 1-12 fallback
       setClasses(CANONICAL_FALLBACK_CLASSES);
       setIsFallback(true);
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to load academic classes.";
       console.warn("useAcademicClasses: Network request failed, using canonical catalogue fallback.", err);
-      setError(err?.message || "Failed to load academic classes.");
+      setError(msg);
       setClasses(CANONICAL_FALLBACK_CLASSES);
       setIsFallback(true);
     } finally {
@@ -191,8 +194,43 @@ export function useAcademicClasses() {
   }, []);
 
   useEffect(() => {
-    fetchClasses();
-  }, [fetchClasses]);
+    let ignore = false;
+    async function init() {
+      try {
+        const res = await fetchWithTenant("/api/v1/academic/classes");
+        if (ignore) return;
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data) && data.length > 0) {
+            setClasses(data);
+            setIsFallback(false);
+            return;
+          }
+        }
+        setClasses(CANONICAL_FALLBACK_CLASSES);
+        setIsFallback(true);
+      } catch (err: unknown) {
+        if (ignore) return;
+        const msg = err instanceof Error ? err.message : "Failed to load academic classes.";
+        console.warn("useAcademicClasses: Network request failed, using canonical catalogue fallback.", err);
+        setError(msg);
+        setClasses(CANONICAL_FALLBACK_CLASSES);
+        setIsFallback(true);
+      } finally {
+        if (!ignore) {
+          setLoading(false);
+        }
+      }
+    }
+    void init();
+    return () => {
+      ignore = true;
+    };
+  }, []);
+
+  const fetchClasses = useCallback(async () => {
+    await loadData(false);
+  }, [loadData]);
 
   const classNames = useMemo(() => classes.map((c) => c.class_name), [classes]);
 

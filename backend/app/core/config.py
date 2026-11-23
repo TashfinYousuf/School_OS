@@ -31,7 +31,10 @@ class Settings(BaseSettings):
     CORS_ORIGINS: List[str] = [
         "http://localhost:3000",
         "http://127.0.0.1:3000",
-        "https://schoolos.app"
+        "https://schoolos.app",
+        "https://www.schoolos.app",
+        "https://educationos.vercel.app",
+        "https://educationosai.vercel.app",
     ]
 
     # Core API Keys
@@ -66,6 +69,20 @@ class Settings(BaseSettings):
 
     PAYMENT_WEBHOOK_SECRET: Optional[str] = None      # python -c "import secrets; print(secrets.token_hex(32))"
     PAYMENT_CHECKOUT_BASE_URL: Optional[str] = None
+
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, v: object) -> object:
+        if isinstance(v, str):
+            s = v.strip()
+            if s.startswith("[") and s.endswith("]"):
+                import json
+                try:
+                    return json.loads(s)
+                except Exception:
+                    pass
+            return [x.strip() for x in s.split(",") if x.strip()]
+        return v
 
     @field_validator("DATABASE_URL")
     @classmethod

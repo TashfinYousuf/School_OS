@@ -29310,6 +29310,26 @@
           "Infrastructure"
         ]
       }
+    },
+    "/livez": {
+      "get": {
+        "description": "Liveness probe: verifies the application process is running and responsive.",
+        "operationId": "liveness_livez_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Liveness",
+        "tags": [
+          "Infrastructure"
+        ]
+      }
     }
   }
 }
